@@ -1,0 +1,12 @@
+{
+  "name": "pi-keep-going",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lets a Pi agent have itself woken after each turn until it decides to stop: goals the agent owns, revises, and ends.",
+  "keywords": ["pi-package", "pi-extension", "goal"],
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions/goal.ts"]
+  }
+}
