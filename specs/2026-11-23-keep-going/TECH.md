@@ -52,9 +52,14 @@ The tool descriptions, `promptSnippet` and `promptGuidelines` explain what the c
 
 ## UI
 
-- `ctx.ui.setStatus` shows the goal (truncated), the wake count, and the waiting or idle state.
+The dashboard is adapted from pi-goal-x's unified dashboard (MIT): the same box frame, colours, layout modes (wide 100+, medium 70+, narrow 50+, minimal), step rows and keys. It's mapped onto our record in `extensions/ui/dashboard.ts` (pure: model in, lines out) and `extensions/ui/widget.ts` (the widget component and keys).
+- **Compact**, above the editor while a goal is active: title, `goal: <state> [elapsed · wakes · tokens]`, a steps window with a progress bar, the current step, the next note, and a notebook line (notes and context counts).
+- **Expanded** with Ctrl+Shift+T: goal, why, all steps, next, notes, the latest context record, and history newest first. The whole body scrolls with ↑/↓/PgUp/PgDn/Home/End; Esc or Ctrl+Shift+T collapses.
+- In compact mode, Ctrl+Shift+↑/↓/PgUp/PgDn/Home/End scroll the steps, but only when they overflow, so the keys are never swallowed for a short list.
+- Kept from pi-goal-x because they took them real bugs to learn: the stable-height latch and dock-chrome measurement (stop the terminal jumping or wiping scrollback), ignoring keys while a dialog's editor has focus, and consuming kitty repeat/release events for our keys.
+- Not ported: the auditor toggle (Ctrl+Shift+A), the Esc pause chord (Pi's own Esc already stops the run, and nothing wakes until the user speaks), configurable keybindings, and the debug panel.
+- The footer status line (`ctx.ui.setStatus`) stays as a one-line summary. `/goal` prints the whole goal; `/goal history` adds every earlier version; `/goal off` stops waking.
 - Message renderers for wakes and notes: compact, one line, expandable.
-- `/goal` prints the whole goal; `/goal history` adds every earlier version; `/goal off` stops waking.
 
 ## Testing
 

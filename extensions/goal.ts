@@ -8,6 +8,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { GoalDashboard } from "./ui/widget.ts";
 import {
 	clip, describeChange, foldGoal, isActive, parseSteps, renderBrief, renderSteps, renderFull, renderFullHistory, since, stepProgress, updateSteps,
 	type Actor, type Goal, type GoalEvent, type GoalFields, type StepInput, type StepUpdate, type Wake, type WakeMark,
@@ -52,10 +53,17 @@ export default function goalExtension(pi: ExtensionAPI) {
 	let lastRunError: string | undefined;
 	let errorAttempts = 0;
 	let errorTimer: ReturnType<typeof setTimeout> | undefined;
+	let retryAt: number | undefined;
+	let busy = false;
+	let tokens = 0;
+	const dashboard = new GoalDashboard(() => isActive(goal)
+		? { goal, live: { busy, tokens, retryInSeconds: retryAt ? Math.max(0, (retryAt - Date.now()) / 1000) : undefined } }
+		: undefined);
 
 	function clearErrorTimer() {
 		if (errorTimer) clearTimeout(errorTimer);
 		errorTimer = undefined;
+		retryAt = undefined;
 	}
 
 	// Events and wake marks on this branch, oldest first; the goal is their fold.
@@ -80,6 +88,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	function updateStatus(ctx: ExtensionContext) {
 		if (!ctx.hasUI) return;
+		dashboard.sync(ctx);
 		try {
 			if (!isActive(goal)) return ctx.ui.setStatus(STATUS_KEY, undefined);
 			const progress = goal.steps.length ? ` · ${stepProgress(goal.steps)?.split(";")[0]}` : "";
@@ -117,9 +126,17 @@ export default function goalExtension(pi: ExtensionAPI) {
 			if ((custom.customType === WAKE_MESSAGE || custom.customType === NOTE_MESSAGE) && (custom.details as { full?: boolean } | undefined)?.full) lastFullView = index;
 		});
 		showFullNext = lastCompaction > lastFullView;
+		tokens = 0;
 		// A forked subagent never runs its parent's goal; it can start its own.
 		acceptStart = (start) => !isSubagentChild() || start.sessionId === sessionId;
 		refold();
+		if (goal) {
+			const start = Date.parse(goal.startedAt);
+			for (const raw of branch) {
+				const entry = raw as { type: string; message?: { role?: string; timestamp?: number; usage?: { input?: number; output?: number } } };
+				if (entry.type === "message" && entry.message?.role === "assistant" && (entry.message.timestamp ?? 0) >= start) tokens += (entry.message.usage?.input ?? 0) + (entry.message.usage?.output ?? 0);
+			}
+		}
 		updateStatus(ctx);
 	}
 
@@ -285,7 +302,14 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => restore(ctx));
 	pi.on("session_tree", async (_event, ctx) => restore(ctx));
-	pi.on("session_shutdown", async () => clearErrorTimer());
+	pi.on("session_shutdown", async () => {
+		clearErrorTimer();
+		dashboard.dispose();
+	});
+	pi.on("message_end", async (event) => {
+		const m = event.message as { role?: string; usage?: { input?: number; output?: number } };
+		if (m.role === "assistant" && isActive(goal)) tokens += (m.usage?.input ?? 0) + (m.usage?.output ?? 0);
+	});
 	pi.on("session_compact", async () => {
 		if (isActive(goal)) showFullNext = true;
 	});
@@ -319,7 +343,9 @@ export default function goalExtension(pi: ExtensionAPI) {
 		return { message: { customType: NOTE_MESSAGE, content: notes.join("\n"), display: true, details: { full } } };
 	});
 
-	pi.on("agent_start", async () => {
+	pi.on("agent_start", async (_event, ctx) => {
+		busy = true;
+		dashboard.sync(ctx);
 		runIsWake = nextRunIsWake;
 		nextRunIsWake = false;
 		runToolCalls = 0;
@@ -375,6 +401,8 @@ export default function goalExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_settled", async (event, ctx) => {
+		busy = false;
+		dashboard.sync(ctx);
 		if (event.aborted || !lastRunError || !isActive(goal) || goal.wake !== "on") return;
 		// The run failed after Pi's own retries. Try again later, slowly.
 		const error = lastRunError;
@@ -384,6 +412,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		const goalId = goal.id;
 		const fire = () => {
 			errorTimer = undefined;
+			retryAt = undefined;
 			try {
 				if (!isActive(goal) || goal.id !== goalId || goal.wake !== "on") return;
 				if (!ctx.isIdle() || ctx.hasPendingMessages()) return; // something else is running; its settle decides
@@ -404,6 +433,8 @@ export default function goalExtension(pi: ExtensionAPI) {
 			}
 		};
 		errorTimer = setTimeout(fire, delay);
+		retryAt = Date.now() + delay;
+		dashboard.sync(ctx);
 		errorTimer.unref?.();
 		try {
 			if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, `↻ goal: last run errored, waking again in ${Math.round(delay / 1000)}s`);
