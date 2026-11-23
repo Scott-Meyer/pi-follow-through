@@ -149,17 +149,23 @@ export function parseSteps(input: StepInput[]): Step[] {
 
 export interface StepUpdate {
 	step: number | string;
-	status: string;
+	status?: string;
+	/** New wording for the step. */
+	text?: string;
 }
 
-/** Apply status updates by 1-based number or by text; returns problems instead of throwing. */
+/** Apply updates by 1-based number or by text; returns problems instead of throwing. */
 export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step[]; problems: string[] } {
 	const next = steps.map((s) => ({ ...s }));
 	const problems: string[] = [];
 	for (const u of updates) {
-		const status = parseStatus(u.status);
-		if (!status) {
+		const status = u.status === undefined ? undefined : parseStatus(u.status);
+		if (u.status !== undefined && !status) {
 			problems.push(`"${u.status}" isn't a step status (use todo, doing, done or dropped)`);
+			continue;
+		}
+		if (!status && !u.text?.trim()) {
+			problems.push(`update for step ${JSON.stringify(u.step)} has neither a status nor new text`);
 			continue;
 		}
 		let index = -1;
@@ -168,13 +174,21 @@ export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step
 		} else {
 			const want = String(u.step).trim().toLowerCase();
 			index = next.findIndex((s) => s.text.toLowerCase() === want);
-			if (index < 0) index = next.findIndex((s) => s.text.toLowerCase().includes(want));
+			if (index < 0) {
+				const matches = next.map((s, i) => [s, i] as const).filter(([s]) => s.text.toLowerCase().includes(want));
+				if (matches.length > 1) {
+					problems.push(`${JSON.stringify(u.step)} matches steps ${matches.map(([, i]) => i + 1).join(", ")}; use a number`);
+					continue;
+				}
+				index = matches[0]?.[1] ?? -1;
+			}
 		}
 		if (index < 0 || index >= next.length) {
-			problems.push(`no step matches ${JSON.stringify(u.step)}`);
+			problems.push(`no step matches ${JSON.stringify(u.step)} (there are ${next.length})`);
 			continue;
 		}
-		next[index].status = status;
+		if (status) next[index].status = status;
+		if (u.text?.trim()) next[index].text = u.text.trim();
 	}
 	return { steps: next, problems };
 }
@@ -191,6 +205,15 @@ export function describeChange(before: Goal | undefined, set: GoalFields, contex
 		const added = set.steps.filter((s) => !oldTexts.has(s.text));
 		const removed = old.filter((s) => !newTexts.has(s.text));
 		const moved = set.steps.filter((s) => oldTexts.has(s.text) && oldTexts.get(s.text)?.status !== s.status);
+		if (added.length && added.length === removed.length && set.steps.length === old.length) {
+			// Same shape, different words: report as rewording rather than add + remove.
+			const renamed = set.steps.map((s, i) => [old[i], s] as const).filter(([o, n]) => o.text !== n.text);
+			for (const [o, n] of renamed) out.push(`step ${set.steps.indexOf(n) + 1} reworded (was: "${clip(o.text, 60)}")${o.status !== n.status ? `, ${o.status} → ${n.status}` : ""}`);
+			for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}`);
+			added.length = 0;
+			removed.length = 0;
+			moved.length = 0;
+		}
 		if (added.length) out.push(`steps added: ${added.map((s) => `"${clip(s.text, 60)}"`).join(", ")}`);
 		if (removed.length) out.push(`steps removed: ${removed.map((s) => `"${clip(s.text, 60)}"`).join(", ")}`);
 		for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}`);
@@ -251,21 +274,32 @@ export function renderHistory(goal: Goal, limit?: number): string {
 	return skipped + lines.join("\n");
 }
 
-/** Every earlier value of the fields that changed, for when the details matter. */
+/**
+ * Every change with the values it replaced, for when the details of the
+ * history matter. Context records aren't repeated; they're in the goal itself.
+ */
 export function renderFullHistory(goal: Goal): string {
-	return goal.history.map((e) => {
+	const out: string[] = [];
+	let before: Goal | undefined;
+	const seen: GoalEvent[] = [];
+	for (const e of goal.history) {
 		const who = e.by === "agent" ? "you" : e.by;
-		if (e.kind === "end") return `## ${e.at} ${who}: ended ${e.outcome}\n${e.reason}`;
-		const head = e.kind === "start" ? `## ${e.at} ${who}: started` : `## ${e.at} ${who}: ${e.summary.join("; ")}`;
-		const parts = [head, e.reason ? `Why: ${e.reason}` : undefined];
-		if (e.set.goal !== undefined) parts.push(`Goal: ${e.set.goal}`);
-		if (e.set.why !== undefined) parts.push(`Why it matters: ${e.set.why ?? "(cleared)"}`);
-		if (e.set.steps !== undefined) parts.push(`Steps:\n${renderSteps(e.set.steps)}`);
-		if (e.set.notes !== undefined) parts.push(`Notes:\n${e.set.notes ?? "(cleared)"}`);
-		if (e.set.next !== undefined) parts.push(`Next: ${e.set.next ?? "(cleared)"}`);
-		if (e.context) parts.push(`Context added:\n${e.context}`);
-		return parts.filter(Boolean).join("\n");
-	}).join("\n\n");
+		if (e.kind === "end") {
+			out.push(`## ${e.at} ${who}: ended ${e.outcome}\n${e.reason}`);
+		} else if (e.kind === "start") {
+			out.push([`## ${e.at} ${who}: started`, e.reason ? `Why: ${e.reason}` : undefined, `Goal: ${e.set.goal}`, e.context ? `(with a context record of ${e.context.length} chars)` : undefined].filter(Boolean).join("\n"));
+		} else {
+			const parts = [`## ${e.at} ${who}: ${e.summary.join("; ")}`, e.reason ? `Why: ${e.reason}` : undefined];
+			if (e.set.goal !== undefined && before?.goal !== e.set.goal) parts.push(`Goal was: ${before?.goal}`);
+			if (e.set.why !== undefined && before?.why) parts.push(`Why it matters was: ${before.why}`);
+			if (e.set.notes !== undefined && before?.notes) parts.push(`Notes were:\n${before.notes}`);
+			if (e.set.next !== undefined && before?.next) parts.push(`Next was: ${before.next}`);
+			out.push(parts.filter(Boolean).join("\n"));
+		}
+		seen.push(e);
+		before = foldGoal(seen);
+	}
+	return out.join("\n\n");
 }
 
 /** Everything: what the agent sees after compaction or when it asks. */

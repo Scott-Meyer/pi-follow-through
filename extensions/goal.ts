@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
-	clip, describeChange, foldGoal, isActive, parseSteps, renderBrief, renderFull, renderFullHistory, since, stepProgress, updateSteps,
+	clip, describeChange, foldGoal, isActive, parseSteps, renderBrief, renderSteps, renderFull, renderFullHistory, since, stepProgress, updateSteps,
 	type Actor, type Goal, type GoalEvent, type GoalFields, type StepInput, type StepUpdate, type Wake, type WakeMark,
 } from "./goal-record.ts";
 
@@ -168,11 +168,14 @@ export default function goalExtension(pi: ExtensionAPI) {
 			goal: Type.Optional(Type.String({ description: "The outcome you're after, the way you'd explain it to a colleague. Needed to start; omit to keep the current one. Specifics are your current plan, not a contract." })),
 			why: Type.Optional(Type.String({ description: "Why it matters and to whom. A future you makes better calls knowing this. Empty string clears." })),
 			steps: Type.Optional(Type.Array(StepItem, { description: "Optional checklist, as the whole list should be now (strings, \"[x] text\", or {text, status}). The reply lists anything added or removed, so an accidental drop is easy to catch." })),
+			add_steps: Type.Optional(Type.Array(StepItem, { description: "Steps to append to the end of the list." })),
 			step_updates: Type.Optional(Type.Array(Type.Object({
-				step: Type.Union([Type.Number(), Type.String()], { description: "1-based number, or the step's text" }),
-				status: Type.String({ description: "todo, doing, done or dropped" }),
-			}), { description: "Quick status changes without resending the list." })),
+				step: Type.Union([Type.Number(), Type.String()], { description: "1-based number, or (part of) the step's text" }),
+				status: Type.Optional(Type.String({ description: "todo, doing, done or dropped" })),
+				text: Type.Optional(Type.String({ description: "New wording for the step" })),
+			}), { description: "Change single steps (status, wording) without resending the list." })),
 			notes: Type.Optional(Type.String({ description: "Your notebook of what truly matters: decisions, constraints, the user's preferences, gotchas, anything you'd hate to lose to compaction. Replaces the previous notes; earlier versions stay in history. Empty string clears." })),
+			add_notes: Type.Optional(Type.String({ description: "Appended to the end of your notes, for adding something without rewriting the rest." })),
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
 			wake: Type.Optional(StringEnum(["on", "after_reply", "off"] as const, { description: "on (the default when starting): be woken each time you finish. after_reply: hold off until the user replies, then wake again; good when you need something from them. off: keep the goal as a notebook without waking." })),
@@ -193,11 +196,16 @@ export default function goalExtension(pi: ExtensionAPI) {
 			const context = params.context?.trim() || undefined;
 			const active = isActive(goal) ? goal : undefined;
 
+			if (params.add_steps?.length) set.steps = [...(set.steps ?? active?.steps ?? []), ...parseSteps(params.add_steps as StepInput[])];
 			if (params.step_updates?.length) {
 				const base = set.steps ?? active?.steps ?? [];
 				const result = updateSteps(base, params.step_updates as StepUpdate[]);
 				set.steps = result.steps;
 				problems.push(...result.problems);
+			}
+			if (params.add_notes?.trim()) {
+				const base = set.notes !== undefined ? set.notes ?? "" : active?.notes ?? "";
+				set.notes = base ? `${base}\n${params.add_notes.trim()}` : params.add_notes.trim();
 			}
 
 			const hasChange = Object.keys(set).length > 0 || !!context;
@@ -232,7 +240,8 @@ export default function goalExtension(pi: ExtensionAPI) {
 				active && !params.change && (set.goal !== undefined || set.why !== undefined || summary.some((s) => s.startsWith("steps removed") || s.startsWith("notes cleared"))) ? "Tip: a few words in `change` saying why would make the history more useful later." : undefined,
 				"",
 				renderBrief(g),
-				g.steps.length && set.steps ? `\nSteps:\n${g.steps.map((s, i) => `${i + 1}. ${s.status === "done" ? "[x]" : s.status === "doing" ? "[~]" : s.status === "dropped" ? "[-]" : "[ ]"} ${s.text}`).join("\n")}` : undefined,
+				// The full list only when its shape changed; a status tick is already in the summary line.
+				g.steps.length && set.steps && (!active || summary.some((l) => /^steps (added|removed)|reworded/.test(l))) ? `\nSteps:\n${renderSteps(g.steps)}` : undefined,
 			];
 			return { content: [{ type: "text", text: lines.filter((l) => l !== undefined).join("\n") }], details: g };
 		},
