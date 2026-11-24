@@ -229,7 +229,7 @@ export class GoalDashboard {
 				this.component.invalidate();
 			}
 			// Keep the elapsed time live while the agent works.
-			if (s?.live.busy || s?.live.retryInSeconds !== undefined) this.startTicker();
+			if (s?.live.busy || s?.live.retryInSeconds !== undefined || (s?.goal.sleepUntil && Date.parse(s.goal.sleepUntil) > Date.now())) this.startTicker();
 			else this.stopTicker();
 		} catch {
 			// stale ctx after reload; the new runtime draws its own widget

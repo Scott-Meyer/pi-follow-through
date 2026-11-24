@@ -15,7 +15,7 @@ type RenderColor = Extract<ThemeColor, "accent" | "warning" | "success" | "error
 
 // ── model ───────────────────────────────────────────────────────────────────
 
-export type DashboardStatusCode = "working" | "on" | "waiting" | "notebook" | "retrying" | "ended";
+export type DashboardStatusCode = "working" | "on" | "sleeping" | "waiting" | "notebook" | "retrying" | "ended";
 
 export interface StepNode {
 	id: string;
@@ -98,6 +98,10 @@ export function deriveDashboardModel(goal: Goal, live: LiveState): DashboardMode
 	else if (goal.wake === "after_reply") status = { code: "waiting", label: "waiting for you" };
 	else if (goal.wake === "off") status = { code: "notebook", label: "notebook (waking off)" };
 	else if (live.busy) status = { code: "working", label: "working" };
+	else if (goal.sleepUntil && Date.parse(goal.sleepUntil) > now) {
+		const at = new Date(goal.sleepUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+		status = { code: "sleeping", label: `sleeping until ${at} (in ${formatDuration((Date.parse(goal.sleepUntil) - now) / 1000)})` };
+	}
 	else status = { code: "on", label: "on · wakes after your next message" };
 
 	const elapsed = formatDuration((now - Date.parse(goal.startedAt)) / 1000);
@@ -222,6 +226,7 @@ function boxFooter(theme: Theme, width: number, content: string, right = ""): st
 const STATUS_COLOR: Record<DashboardStatusCode, RenderColor> = {
 	working: "accent",
 	on: "accent",
+	sleeping: "muted",
 	waiting: "mdHeading",
 	notebook: "muted",
 	retrying: "warning",

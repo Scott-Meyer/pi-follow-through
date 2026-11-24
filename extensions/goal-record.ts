@@ -26,6 +26,8 @@ export interface GoalFields {
 	notes?: string | null;
 	next?: string | null;
 	wake?: Wake;
+	/** ISO time before which finishing a turn doesn't wake the agent. Null clears. */
+	sleepUntil?: string | null;
 }
 
 export type GoalEvent =
@@ -48,6 +50,7 @@ export interface Goal {
 	notes?: string;
 	next?: string;
 	wake: Wake;
+	sleepUntil?: string;
 	context: ContextRecord[];
 	startedAt: string;
 	updatedAt: string;
@@ -69,6 +72,7 @@ function apply(goal: Goal, set: GoalFields) {
 		goal.nextSetAtWake = goal.wakes;
 	}
 	if (set.wake !== undefined) goal.wake = set.wake;
+	if (set.sleepUntil !== undefined) goal.sleepUntil = set.sleepUntil ?? undefined;
 }
 
 /**
@@ -83,6 +87,8 @@ export function foldGoal(items: Array<GoalEvent | WakeMark>, accept: (start: Ext
 			if (current && item.goalId === current.id) {
 				current.wakes = item.wake;
 				current.lastWakeAt = item.at;
+				// A wake at or after the sleep time ends the sleep.
+				if (current.sleepUntil && item.at >= current.sleepUntil) current.sleepUntil = undefined;
 			}
 			continue;
 		}
@@ -273,9 +279,36 @@ export function describeChange(
 		out.push(!set.notes ? `notes cleared (were ${was} chars)` : was ? `notes rewritten (${was} → ${now} chars)` : `notes written (${now} chars)`);
 	}
 	if (set.next !== undefined && (set.next ?? undefined) !== before?.next) out.push("next note updated");
+	if (set.sleepUntil !== undefined && (set.sleepUntil ?? undefined) !== before?.sleepUntil) out.push(set.sleepUntil ? `sleeping until ${clockTime(set.sleepUntil)}` : "sleep cleared");
 	if (set.wake !== undefined && set.wake !== before?.wake) out.push(`waking ${set.wake === "on" ? "on" : set.wake === "off" ? "off" : "held until the user replies"}`);
 	if (context) out.push(`context record added (${context.length} chars)`);
 	return out;
+}
+
+export function clockTime(iso: string): string {
+	const d = new Date(iso);
+	const sameDay = new Date().toDateString() === d.toDateString();
+	const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	return sameDay ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+/** "10m", "90s", "2h30m", "1d", a bare number of minutes, or an ISO time. */
+export function parseWakeTime(input: string, now = Date.now()): { at: string } | { problem: string } {
+	const text = input.trim().toLowerCase();
+	if (!text) return { problem: "wake_in is empty" };
+	if (/^\d+(\.\d+)?$/.test(text)) return { at: new Date(now + Number(text) * 60_000).toISOString() };
+	const parts = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(d|h|m|s|days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)/g)];
+	if (parts.length && parts.map((p) => p[0]).join("").replace(/\s+/g, "") === text.replace(/\s+/g, "").replace(/^in/, "")) {
+		const unit = (u: string) => (u.startsWith("d") ? 86_400_000 : u.startsWith("h") ? 3_600_000 : u.startsWith("s") ? 1000 : 60_000);
+		const ms = parts.reduce((sum, p) => sum + Number(p[1]) * unit(p[2]), 0);
+		return { at: new Date(now + ms).toISOString() };
+	}
+	const parsed = Date.parse(input.trim());
+	if (!Number.isNaN(parsed)) {
+		if (parsed <= now) return { problem: `${input.trim()} is in the past` };
+		return { at: new Date(parsed).toISOString() };
+	}
+	return { problem: `couldn't read "${input.trim()}" as a time (try 10m, 2h30m, or an ISO time)` };
 }
 
 export function clip(text: string, max: number): string {
@@ -306,7 +339,8 @@ export function stepProgress(steps: Step[]): string | undefined {
 	return `${done}/${live.length} done${doing.length ? `; now: ${doing.map((t) => clip(t, 100)).join(" / ")}` : upNext ? `; next up: ${clip(upNext, 100)}` : ""}`;
 }
 
-function wakeLabel(wake: Wake): string {
+function wakeLabel(wake: Wake, sleepUntil?: string): string {
+	if (wake === "on" && sleepUntil) return `sleeping until ${clockTime(sleepUntil)}, then woken each time you finish`;
 	return wake === "on" ? "on (woken each time you finish)" : wake === "after_reply" ? "held until the user replies" : "off (notebook only)";
 }
 
@@ -358,7 +392,7 @@ export function renderFull(goal: Goal, now = Date.now()): string {
 	const parts = [
 		`Goal: ${goal.goal}`,
 		goal.why ? `Why: ${goal.why}` : undefined,
-		`Waking: ${wakeLabel(goal.wake)}. Started ${since(goal.startedAt, now)} ago; woken ${goal.wakes} time${goal.wakes === 1 ? "" : "s"}.`,
+		`Waking: ${wakeLabel(goal.wake, goal.sleepUntil)}. Started ${since(goal.startedAt, now)} ago; woken ${goal.wakes} time${goal.wakes === 1 ? "" : "s"}.`,
 		goal.ended ? `Ended ${goal.ended.outcome} (${goal.ended.by === "agent" ? "by you" : `by ${goal.ended.by}`}): ${goal.ended.reason}` : undefined,
 		goal.steps.length ? `Steps (${stepProgress(goal.steps)}):\n${renderSteps(goal.steps)}` : undefined,
 		goal.next ? `Next (your note): ${goal.next}` : undefined,
@@ -379,6 +413,7 @@ export function renderBrief(goal: Goal): string {
 		goal.why ? `Why: ${clip(goal.why, 400)}` : undefined,
 		goal.steps.length ? `Steps: ${stepProgress(goal.steps)}` : undefined,
 		goal.next ? `Next (your note): ${goal.next}` : undefined,
+		goal.sleepUntil ? `Sleeping until ${clockTime(goal.sleepUntil)}; finishing a turn won't wake you before then.` : undefined,
 		extras.length ? `You also have ${extras.join(" and ")}; goal() with no arguments shows everything.` : undefined,
 	].filter(Boolean).join("\n");
 }

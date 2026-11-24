@@ -10,7 +10,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { GoalDashboard } from "./ui/widget.ts";
 import {
-	clip, describeChange, editText, foldGoal, isActive, parseSteps, renderBrief, renderSteps, renderFull, renderFullHistory, since, stepProgress, updateSteps,
+	clip, clockTime, describeChange, editText, parseWakeTime, foldGoal, isActive, parseSteps, renderBrief, renderSteps, renderFull, renderFullHistory, since, stepProgress, updateSteps,
 	type Actor, type Goal, type GoalEvent, type GoalFields, type StepInput, type TextEdit, type StepUpdate, type Wake, type WakeMark,
 } from "./goal-record.ts";
 
@@ -54,6 +54,8 @@ export default function goalExtension(pi: ExtensionAPI) {
 	let errorAttempts = 0;
 	let errorTimer: ReturnType<typeof setTimeout> | undefined;
 	let retryAt: number | undefined;
+	let sleepTimer: ReturnType<typeof setTimeout> | undefined;
+	let sleepArmedFor: string | undefined;
 	let busy = false;
 	let tokens = 0;
 	const dashboard = new GoalDashboard(() => isActive(goal)
@@ -86,7 +88,52 @@ export default function goalExtension(pi: ExtensionAPI) {
 		refold();
 	}
 
+	function clearSleepTimer() {
+		if (sleepTimer) clearTimeout(sleepTimer);
+		sleepTimer = undefined;
+		sleepArmedFor = undefined;
+	}
+
+	function isSleeping(g: Goal | undefined = goal): boolean {
+		return !!g?.sleepUntil && Date.parse(g.sleepUntil) > Date.now();
+	}
+
+	/** Keep one timer for the goal's sleep, if it has one. */
+	function armSleep(ctx: ExtensionContext) {
+		const until = isActive(goal) && goal.wake === "on" ? goal.sleepUntil : undefined;
+		if (until === sleepArmedFor) return;
+		clearSleepTimer();
+		if (!until || !goal) return;
+		sleepArmedFor = until;
+		const goalId = goal.id;
+		sleepTimer = setTimeout(() => {
+			sleepTimer = undefined;
+			sleepArmedFor = undefined;
+			try {
+				if (!isActive(goal) || goal.id !== goalId || goal.wake !== "on" || goal.sleepUntil !== until) return;
+				// If something is running, its settle will wake normally now that the time has passed.
+				if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
+				const at = nowIso();
+				const mark: WakeMark = { goalId, wake: goal.wakes + 1, at };
+				track(mark);
+				if (!isActive(goal)) return;
+				nextRunIsWake = true;
+				const full = showFullNext;
+				showFullNext = false;
+				updateStatus(ctx);
+				pi.sendMessage(
+					{ customType: WAKE_MESSAGE, content: wakeContent(goal, { full, timed: until }), display: true, details: { ...mark, goal: goal.goal, full, timed: until } },
+					{ triggerTurn: true, deliverAs: "followUp" },
+				);
+			} catch {
+				// ctx went stale (reload or session replacement); the new runtime re-arms from the record
+			}
+		}, Math.max(0, Date.parse(until) - Date.now()));
+		sleepTimer.unref?.();
+	}
+
 	function updateStatus(ctx: ExtensionContext) {
+		armSleep(ctx);
 		if (!ctx.hasUI) return;
 		dashboard.sync(ctx);
 		try {
@@ -105,6 +152,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	function restore(ctx: ExtensionContext) {
 		clearErrorTimer();
+		clearSleepTimer();
 		idleStreak = 0;
 		errorAttempts = 0;
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -140,8 +188,9 @@ export default function goalExtension(pi: ExtensionAPI) {
 		updateStatus(ctx);
 	}
 
-	function wakeContent(g: Goal, opts: { full?: boolean; error?: string } = {}): string {
+	function wakeContent(g: Goal, opts: { full?: boolean; error?: string; timed?: string } = {}): string {
 		const nudges: string[] = [];
+		if (opts.timed) nudges.push(`You asked to be woken at ${clockTime(opts.timed)}; it's ${clockTime(nowIso())} now.`);
 		if (opts.error) nudges.push(`Your last run ended in an error (${clip(opts.error, 300)}), so this wake came after a pause.`);
 		if (idleStreak > 0) nudges.push(`Your last ${idleStreak === 1 ? "wake" : `${idleStreak} wakes`} used no tools; after ${IDLE_FUSE} in a row, waking turns itself off.`);
 		if (g.next && g.wakes - g.nextSetAtWake >= STALE_NEXT_WAKES) nudges.push(`Your next note hasn't changed in ${g.wakes - g.nextSetAtWake} wakes; worth refreshing if things have moved on.`);
@@ -215,6 +264,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			}), { description: "Targeted edits to the notes, like editing a file: each one replaces one exact passage and leaves everything else as it is." })),
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
+			wake_in: Type.Optional(Type.String({ description: "Don't wake me before this: a duration like 10m, 90s or 2h30m, or an ISO time. Until then finishing a turn won't wake you (the user still gets answers), and afterwards waking carries on as usual. Good for waiting on CI, a deploy, or someone else's work. Empty string cancels." })),
 			wake: Type.Optional(StringEnum(["on", "after_reply", "off"] as const, { description: "on (the default when starting): be woken each time you finish. after_reply: hold off until the user replies, then wake again; for when there's truly nothing useful to do until they answer. Needing one thing from them rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. off: keep the goal as a notebook without waking." })),
 			change: Type.Optional(Type.String({ description: "Optional: a few words on why you're making this change as a whole. It goes in the history next to it; the per-item why fields cover individual steps and edits." })),
 			history: Type.Optional(Type.Boolean({ description: "true shows every earlier version of what changed, for when the details of the history matter." })),
@@ -229,6 +279,17 @@ export default function goalExtension(pi: ExtensionAPI) {
 			if (params.notes !== undefined) set.notes = text(params.notes);
 			if (params.next !== undefined) set.next = text(params.next);
 			if (params.wake !== undefined) set.wake = params.wake as Wake;
+			if (params.wake_in !== undefined) {
+				if (!params.wake_in.trim()) set.sleepUntil = null;
+				else {
+					const parsed = parseWakeTime(params.wake_in);
+					if ("problem" in parsed) problems.push(`wake_in: ${parsed.problem}`);
+					else {
+						set.sleepUntil = parsed.at;
+						if (params.wake === undefined) set.wake = "on";
+					}
+				}
+			}
 			const context = params.context?.trim() || undefined;
 			const active = isActive(goal) ? goal : undefined;
 			const stepWhy = new Map<string, string>();
@@ -350,6 +411,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 	pi.on("session_tree", async (_event, ctx) => restore(ctx));
 	pi.on("session_shutdown", async () => {
 		clearErrorTimer();
+		clearSleepTimer();
 		dashboard.dispose();
 	});
 	pi.on("message_end", async (event) => {
@@ -413,6 +475,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.on("agent_before_settle", async (event, ctx) => {
 		if (!isActive(goal) || goal.wake !== "on" || event.outcome !== "completed") return;
+		if (isSleeping()) return; // the sleep timer wakes it
 		if (event.context.pendingMessages.length > 0) return; // the user's queued input goes first
 		errorAttempts = 0;
 		idleStreak = runIsWake && runToolCalls === 0 ? idleStreak + 1 : 0;
