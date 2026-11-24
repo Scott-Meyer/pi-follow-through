@@ -19,6 +19,10 @@ A boundary `outcome` of `error` (after Pi's own retries) doesn't continue immedi
 
 The wake says the last run ended in an error and includes the error message. Quota and auth errors use the same ladder: the agent and Scott can see what's happening and stop it.
 
+## Timed wakes
+
+`wake_in` sets `sleepUntil` on the goal (an event field). While it's in the future, `agent_before_settle` doesn't continue. One in-memory timer per goal fires at that time. If Pi is idle, it sends the wake with `sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`. If Pi is busy, the run's own settle wakes normally, since the time has passed. A wake mark at or after `sleepUntil` ends the sleep in the fold, so no extra event is needed. The timer is re-armed from the record on restore; if the time already passed, it fires right away. It was verified in RPC mode: the agent ran `date`, slept 20s, was woken, ran `date` again, and ended the goal.
+
 ## No-progress fuse
 
 Count tool executions per run. If a wake's run makes no tool calls three times in a row, don't continue. Record `wake: off` (by `keep-going`) with a visible note. The agent can turn it back on. The wake message includes "your last wake used no tools", so the agent can notice before the fuse trips.

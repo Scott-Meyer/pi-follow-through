@@ -33,7 +33,8 @@ Every part except the goal sentence is optional, and all of it can change at any
 - **notes:** the notebook of what truly matters (decisions, constraints, Scott's preferences, gotchas). It's edited like a file: replace the whole thing, append to the end, or make targeted edits that replace one exact passage and leave the rest alone. Old versions stay in history.
 - **context:** records that accumulate and are never overwritten: conversation excerpts (verbatim is often best), how a requirement came about, what was tried.
 - **next:** a note to the agent's next turn.
-- **wake:** `on` (woken each time it finishes; the default), `after_reply` (held until Scott replies, then on again), or `off` (a notebook only).
+- **wake:** `on` (woken each time it finishes; the default), `after_reply` (held until Scott replies, then on again), or `off` (a notebook only). Needing one thing from Scott rarely blocks everything, so the guidance is to ask and keep working on the rest; `after_reply` is for when nothing else can move.
+- **wake_in:** "don't wake me before then", as a duration (`10m`, `2h30m`) or a time. It's for waiting on CI, a deploy, or someone else's work. Until then finishing a turn doesn't wake the agent, though Scott still gets answers; afterwards waking carries on. It survives restarts, and if Pi was closed when the time passed, the wake comes when Pi is back.
 
 There's one goal per session at a time. Ending it and starting another is fine.
 
@@ -65,5 +66,6 @@ Every change is recorded with what changed, who changed it (the agent, Scott, or
 - Sharing goals across sessions or machines.
 
 ## Open
-- Timed wakes ("wake me in 10 minutes, when CI should be done").
 - Package name: `pi-keep-going` is a working name.
+- Whether timed wakes earn their place; Scott called them "that weird timer thing".
+- The dashboard "looks fine I guess"; what it's missing is an open question.
