@@ -186,8 +186,10 @@ export interface StepUpdate {
 }
 
 /** Apply updates by 1-based number or by text; returns problems instead of throwing. */
-export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step[]; problems: string[]; why: Map<string, string> } {
+export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step[]; problems: string[]; why: Map<string, string>; renamed: Map<string, string> } {
 	const why = new Map<string, string>();
+	/** New text → old text, for steps reworded by an update. */
+	const renamed = new Map<string, string>();
 	const next = steps.map((s) => ({ ...s }));
 	const problems: string[] = [];
 	for (const u of updates) {
@@ -220,10 +222,15 @@ export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step
 			continue;
 		}
 		if (status) next[index].status = status;
-		if (u.text?.trim()) next[index].text = u.text.trim();
+		if (u.text?.trim() && u.text.trim() !== next[index].text) {
+			const original = renamed.get(next[index].text) ?? next[index].text;
+			renamed.delete(next[index].text);
+			next[index].text = u.text.trim();
+			renamed.set(next[index].text, original);
+		}
 		if (u.why?.trim()) why.set(next[index].text, u.why.trim());
 	}
-	return { steps: next, problems, why };
+	return { steps: next, problems, why, renamed };
 }
 
 export interface TextEdit {
@@ -268,7 +275,7 @@ export function describeChange(
 	before: Goal | undefined,
 	set: GoalFields,
 	context?: string,
-	extra: { notesLines?: string[]; stepWhy?: Map<string, string> } = {},
+	extra: { notesLines?: string[]; stepWhy?: Map<string, string>; renamed?: Map<string, string> } = {},
 ): string[] {
 	const out: string[] = [];
 	const stepWhy = (text: string) => (extra.stepWhy?.get(text) ? ` — ${extra.stepWhy.get(text)}` : "");
@@ -295,6 +302,13 @@ export function describeChange(
 			const added: Step[] = [];
 			const moved: Array<[Step, Step]> = [];
 			for (const n of next) {
+				const was = extra.renamed?.get(n.text);
+				const renamedAt = was !== undefined ? remaining.findIndex((o) => o.text === was) : -1;
+				if (renamedAt >= 0) {
+					const [o] = remaining.splice(renamedAt, 1);
+					out.push(`step reworded: "${clip(n.text, 60)}" (was: "${clip(o.text, 60)}")${o.status !== n.status ? `, ${o.status} → ${n.status}` : ""}${stepWhy(n.text)}`);
+					continue;
+				}
 				const at = remaining.findIndex((o) => o.text === n.text);
 				if (at < 0) added.push(n);
 				else {

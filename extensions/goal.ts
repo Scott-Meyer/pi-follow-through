@@ -331,6 +331,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			const context = params.context?.trim() || undefined;
 			const active = isActive(goal) ? goal : undefined;
 			const stepWhy = new Map<string, string>();
+			const renamed = new Map<string, string>();
 			const noteWhy = (items: Array<StepInput>) => {
 				for (const item of items) if (typeof item === "object" && item && "why" in item && typeof item.why === "string" && item.why.trim() && item.text) stepWhy.set(item.text.trim(), item.why.trim());
 			};
@@ -345,6 +346,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 				set.steps = result.steps;
 				problems.push(...result.problems);
 				for (const [k, v] of result.why) stepWhy.set(k, v);
+				for (const [k, v] of result.renamed) renamed.set(k, v);
 			}
 			if (params.add_steps?.length) {
 				const list = [...(set.steps ?? active?.steps ?? [])];
@@ -387,7 +389,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: active ? body : `Your last goal has ended; starting a new one replaces it.\n\n${body}` }], details: smallDetails(goal) };
 			}
 
-			const summary = active ? describeChange(active, notesOps.length ? { ...set, notes: notesAfter ?? null } : set, context, { notesLines, stepWhy }) : ["started"];
+			const summary = active ? describeChange(active, notesOps.length ? { ...set, notes: notesAfter ?? null } : set, context, { notesLines, stepWhy, renamed }) : ["started"];
 			if (!active) {
 				if (!set.goal) {
 					return { isError: true, content: [{ type: "text", text: "Nothing to update: no goal is active. Include `goal` (what you're after) to start one; everything else is optional." }], details: smallDetails(goal) };
