@@ -33,9 +33,9 @@ function isKittyRepeatOrRelease(data: string): boolean {
 interface HeightLatch { cap?: number; regime?: string; rows?: number; reserve?: number }
 
 /**
- * Keep the rendered height constant within one regime: the first render
- * latches min(natural, cap); growth is head-sliced, shrink is blank-padded.
- * A changing dock height makes the terminal jump to the bottom; this stops it.
+ * Keep the rendered height from shrinking within one regime, so the terminal
+ * doesn't jump each time content gets shorter: shrink is blank-padded. Growth
+ * is allowed up to the terminal cap, so the box never loses its bottom border.
  */
 function applyStableHeight(lines: string[], terminalRows: number | undefined, latch: HeightLatch, regime: string, reserve: number): string[] {
 	if (!terminalRows || terminalRows <= 0) return lines;
@@ -46,8 +46,8 @@ function applyStableHeight(lines: string[], terminalRows: number | undefined, la
 		latch.reserve = reserve;
 		latch.regime = regime;
 	}
-	if (latch.cap === undefined) latch.cap = Math.min(lines.length, cap);
-	if (lines.length > latch.cap) return lines.slice(0, latch.cap);
+	if (latch.cap === undefined || lines.length > latch.cap) latch.cap = Math.min(lines.length, cap);
+	if (lines.length > latch.cap) return [...lines.slice(0, latch.cap - 1), lines[lines.length - 1]];
 	if (lines.length < latch.cap) return [...lines, ...Array(latch.cap - lines.length).fill("")];
 	return lines;
 }
@@ -268,7 +268,8 @@ export class GoalDashboard {
 				if (ours(KEYS.collapse)) {
 					this.expanded = false;
 					component.invalidate();
-					return { consume: true };
+					// While the agent works, Esc also does its usual job of stopping it.
+					return this.source()?.live.busy ? undefined : { consume: true };
 				}
 				for (const [name, key] of Object.entries(KEYS.expanded)) if (ours(key) && component.handleExpandedKey(name as NavKey)) return { consume: true };
 				return undefined;

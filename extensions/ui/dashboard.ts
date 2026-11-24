@@ -79,15 +79,18 @@ function historyText(e: GoalEvent): HistoryItem {
 	if (e.kind === "start") return { at: e.at, text: `${who}started${e.reason ? ` — ${e.reason}` : ""}`, marker: "current" };
 	if (e.kind === "end") return { at: e.at, text: `${who}ended ${e.outcome} — ${e.reason}`, marker: e.outcome === "done" ? "done" : "skipped" };
 	const text = `${who}${e.summary.join("; ")}${e.reason ? ` — ${e.reason}` : ""}`;
-	const marker = e.summary.some((s) => s.endsWith("→ done")) ? "done" : e.summary.some((s) => s.endsWith("→ doing")) ? "current" : e.summary.some((s) => s.endsWith("→ dropped")) ? "skipped" : undefined;
+	const marker = e.summary.some((s) => s.includes("→ done")) ? "done" : e.summary.some((s) => s.includes("→ doing")) ? "current" : e.summary.some((s) => s.includes("→ dropped")) ? "skipped" : undefined;
 	return { at: e.at, text, marker };
 }
+
+/** Rows are single lines; model-written text can carry newlines. */
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
 export function deriveDashboardModel(goal: Goal, live: LiveState): DashboardModel {
 	const now = live.now ?? Date.now();
 	const doingIndex = goal.steps.findIndex((s) => s.status === "doing");
 	const currentIndex = doingIndex >= 0 ? doingIndex : goal.steps.findIndex((s) => s.status === "todo");
-	const steps: StepNode[] = goal.steps.map((s, i) => ({ id: String(i + 1), title: s.text, status: s.status, isCurrent: i === currentIndex && !goal.ended }));
+	const steps: StepNode[] = goal.steps.map((s, i) => ({ id: String(i + 1), title: oneLine(s.text), status: s.status, isCurrent: i === currentIndex && !goal.ended }));
 	const live_ = goal.steps.filter((s) => s.status !== "dropped");
 	const done = live_.filter((s) => s.status === "done").length;
 	const progress = goal.steps.length ? { done, total: live_.length, percentage: live_.length ? Math.round((done / live_.length) * 100) : 100 } : undefined;
@@ -110,7 +113,7 @@ export function deriveDashboardModel(goal: Goal, live: LiveState): DashboardMode
 
 	return {
 		goalId: goal.id,
-		title: goal.goal,
+		title: oneLine(goal.goal),
 		why: goal.why,
 		status,
 		usageBits,
@@ -121,7 +124,7 @@ export function deriveDashboardModel(goal: Goal, live: LiveState): DashboardMode
 		notes: goal.notes,
 		contextCount: goal.context.length,
 		latestContext: latest,
-		history: goal.history.map(historyText).reverse(),
+		history: goal.history.map(historyText).map((h) => ({ ...h, text: oneLine(h.text) })).reverse(),
 	};
 }
 

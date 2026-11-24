@@ -33,8 +33,29 @@ export interface GoalFields {
 
 export type GoalEvent =
 	| { kind: "start"; goalId: string; sessionId: string; at: string; by: Actor; set: GoalFields; context?: string; reason?: string }
-	| { kind: "change"; goalId: string; at: string; by: Actor; set: GoalFields; context?: string; reason?: string; summary: string[]; /** Notes changed by targeted edits; the summary already shows each one. */ notesEdited?: boolean }
+	| {
+		kind: "change"; goalId: string; at: string; by: Actor; set: GoalFields; context?: string; reason?: string; summary: string[];
+		/** Appends and targeted edits to the notes, replayed in order after `set`, so small edits stay small on disk. */
+		notesOps?: NotesOp[];
+		/** Older records: notes changed by targeted edits but stored whole in `set.notes`. */
+		notesEdited?: boolean;
+	}
 	| { kind: "end"; goalId: string; at: string; by: Actor; outcome: "done" | "dropped"; reason: string };
+
+export type NotesOp = { append: string } | { old_text: string; new_text: string };
+
+/** Replay notes ops; each was validated against the notes when it was written. */
+export function applyNotesOps(notes: string | undefined, ops: NotesOp[]): string | undefined {
+	let text = notes ?? "";
+	for (const op of ops) {
+		if ("append" in op) text = text ? `${text.replace(/\s+$/, "")}\n${op.append}` : op.append;
+		else {
+			const at = text.indexOf(op.old_text);
+			if (at >= 0) text = text.slice(0, at) + op.new_text + text.slice(at + op.old_text.length);
+		}
+	}
+	return text.trim() ? text : undefined;
+}
 
 export interface WakeMark {
 	goalId: string;
@@ -108,6 +129,7 @@ export function foldGoal(items: Array<GoalEvent | WakeMark>, accept: (start: Ext
 		current.updatedAt = item.at;
 		if (item.kind === "change") {
 			apply(current, item.set);
+			if (item.notesOps?.length) current.notes = applyNotesOps(current.notes, item.notesOps);
 			if (item.context) current.context.push({ at: item.at, text: item.context });
 		} else {
 			current.ended = { outcome: item.outcome, reason: item.reason, at: item.at, by: item.by };
@@ -254,23 +276,37 @@ export function describeChange(
 	if (set.why !== undefined && (set.why ?? undefined) !== before?.why) out.push(set.why ? (before?.why ? "why changed" : "why set") : "why cleared");
 	if (set.steps !== undefined) {
 		const old = before?.steps ?? [];
-		const oldTexts = new Map(old.map((s) => [s.text, s]));
-		const newTexts = new Set(set.steps.map((s) => s.text));
-		const added = set.steps.filter((s) => !oldTexts.has(s.text));
-		const removed = old.filter((s) => !newTexts.has(s.text));
-		const moved = set.steps.filter((s) => oldTexts.has(s.text) && oldTexts.get(s.text)?.status !== s.status);
-		if (added.length && added.length === removed.length && set.steps.length === old.length) {
-			// Same shape, different words: report as rewording rather than add + remove.
-			const renamed = set.steps.map((s, i) => [old[i], s] as const).filter(([o, n]) => o.text !== n.text);
-			for (const [o, n] of renamed) out.push(`step ${set.steps.indexOf(n) + 1} reworded (was: "${clip(o.text, 60)}")${o.status !== n.status ? `, ${o.status} → ${n.status}` : ""}${stepWhy(n.text)}`);
-			for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}${stepWhy(s.text)}`);
-			added.length = 0;
-			removed.length = 0;
-			moved.length = 0;
+		const next = set.steps;
+		const lineUp = old.length === next.length;
+		if (lineUp && old.every((o, i) => o.text === next[i].text)) {
+			// Same steps in the same places: report status changes by position, so repeated texts are fine.
+			next.forEach((n, i) => {
+				if (old[i].status !== n.status) out.push(`step ${i + 1} "${clip(n.text, 60)}": ${old[i].status} → ${n.status}${stepWhy(n.text)}`);
+			});
+		} else if (lineUp && next.every((n, i) => n.text === old[i].text || !old.some((o) => o.text === n.text))) {
+			// Same shape; every changed text is new rather than moved from elsewhere: reworded.
+			next.forEach((n, i) => {
+				const o = old[i];
+				if (o.text !== n.text) out.push(`step ${i + 1} reworded (was: "${clip(o.text, 60)}")${o.status !== n.status ? `, ${o.status} → ${n.status}` : ""}${stepWhy(n.text)}`);
+				else if (o.status !== n.status) out.push(`step ${i + 1} "${clip(n.text, 60)}": ${o.status} → ${n.status}${stepWhy(n.text)}`);
+			});
+		} else {
+			const remaining = [...old];
+			const added: Step[] = [];
+			const moved: Array<[Step, Step]> = [];
+			for (const n of next) {
+				const at = remaining.findIndex((o) => o.text === n.text);
+				if (at < 0) added.push(n);
+				else {
+					const [o] = remaining.splice(at, 1);
+					if (o.status !== n.status) moved.push([o, n]);
+				}
+			}
+			for (const n of added) out.push(`step added: "${clip(n.text, 60)}"${stepWhy(n.text)}`);
+			for (const o of remaining) out.push(`step removed: "${clip(o.text, 60)}"`);
+			for (const [o, n] of moved) out.push(`step "${clip(n.text, 60)}": ${o.status} → ${n.status}${stepWhy(n.text)}`);
+			if (!added.length && !remaining.length && old.some((o, i) => o.text !== next[i]?.text)) out.push("steps reordered");
 		}
-		for (const s of added) out.push(`step added: "${clip(s.text, 60)}"${stepWhy(s.text)}`);
-		for (const s of removed) out.push(`step removed: "${clip(s.text, 60)}"`);
-		for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}${stepWhy(s.text)}`);
 	}
 	if (extra.notesLines?.length) {
 		out.push(...extra.notesLines);
@@ -302,7 +338,7 @@ export function parseWakeTime(input: string, now = Date.now()): { at: string } |
 	const text = input.trim().toLowerCase();
 	if (!text) return { problem: "wake_in is empty" };
 	if (/^\d+(\.\d+)?$/.test(text)) return { at: new Date(now + Number(text) * 60_000).toISOString() };
-	const parts = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(d|h|m|s|days?|hours?|hrs?|minutes?|mins?|seconds?|secs?)/g)];
+	const parts = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(days?|hours?|hrs?|minutes?|mins?|seconds?|secs?|d|h|m|s)/g)];
 	if (parts.length && parts.map((p) => p[0]).join("").replace(/\s+/g, "") === text.replace(/\s+/g, "").replace(/^in/, "")) {
 		const unit = (u: string) => (u.startsWith("d") ? 86_400_000 : u.startsWith("h") ? 3_600_000 : u.startsWith("s") ? 1000 : 60_000);
 		const ms = parts.reduce((sum, p) => sum + Number(p[1]) * unit(p[2]), 0);
@@ -393,7 +429,27 @@ export function renderFullHistory(goal: Goal): string {
 }
 
 /** Everything: what the agent sees after compaction or when it asks. */
-export function renderFull(goal: Goal, now = Date.now()): string {
+/** Context records newest-first within a character budget; older ones get their first line. */
+function renderContext(records: ContextRecord[], maxChars?: number): string {
+	if (!maxChars) return records.map((c) => `--- ${c.at}\n${c.text}`).join("\n");
+	const out: string[] = [];
+	let used = 0;
+	let shortened = 0;
+	for (let i = records.length - 1; i >= 0; i--) {
+		const c = records[i];
+		if (used + c.text.length <= maxChars || out.length === 0) {
+			const text = c.text.length > maxChars ? `${c.text.slice(0, maxChars)}\n…[cut here; goal() shows the full record]` : c.text;
+			out.unshift(`--- ${c.at}\n${text}`);
+			used += text.length;
+		} else {
+			out.unshift(`--- ${c.at} (shortened)\n${clip(c.text.split("\n")[0] ?? "", 160)}`);
+			shortened++;
+		}
+	}
+	return `${out.join("\n")}${shortened ? `\n(${shortened} older record${shortened === 1 ? "" : "s"} shortened to fit; goal() with no arguments shows them all.)` : ""}`;
+}
+
+export function renderFull(goal: Goal, now = Date.now(), opts: { maxContextChars?: number } = {}): string {
 	const parts = [
 		`Goal: ${goal.goal}`,
 		goal.why ? `Why: ${goal.why}` : undefined,
@@ -402,7 +458,7 @@ export function renderFull(goal: Goal, now = Date.now()): string {
 		goal.steps.length ? `Steps (${stepProgress(goal.steps)}):\n${renderSteps(goal.steps)}` : undefined,
 		goal.next ? `Next (your note): ${goal.next}` : undefined,
 		goal.notes ? `Notes:\n${goal.notes}` : undefined,
-		goal.context.length ? `Context (how this came about):\n${goal.context.map((c) => `--- ${c.at}\n${c.text}`).join("\n")}` : undefined,
+		goal.context.length ? `Context (how this came about):\n${renderContext(goal.context, opts.maxContextChars)}` : undefined,
 		`History:\n${renderHistory(goal, 20)}`,
 	];
 	return parts.filter(Boolean).join("\n\n");
@@ -418,7 +474,7 @@ export function renderBrief(goal: Goal): string {
 		goal.why ? `Why: ${clip(goal.why, 400)}` : undefined,
 		goal.steps.length ? `Steps: ${stepProgress(goal.steps)}` : undefined,
 		goal.next ? `Next (your note): ${goal.next}` : undefined,
-		goal.sleepUntil ? `Sleeping until ${clockTime(goal.sleepUntil)}; finishing a turn won't wake you before then.` : undefined,
+		goal.sleepUntil && goal.wake === "on" ? `Sleeping until ${clockTime(goal.sleepUntil)}; finishing a turn won't wake you before then.` : undefined,
 		extras.length ? `You also have ${extras.join(" and ")}; goal() with no arguments shows everything.` : undefined,
 	].filter(Boolean).join("\n");
 }
