@@ -35,6 +35,18 @@ A dashboard above the editor while a goal is active. `Ctrl+Shift+T` expands it t
 - `/goal history` adds every earlier version.
 - `/goal off` pauses waking until you next message the agent. The agent is told, and messages from other sessions don't resume it.
 
+## For other extensions and apps
+
+When a goal pauses to wait for someone, pi-follow-through emits `pi-follow-through:goal:v1` on Pi's event bus (`pi.events`), so a host app or notifier can prompt the user:
+
+```ts
+pi.events.on("pi-follow-through:goal:v1", (e) => { /* … */ });
+// { state: "waiting", sessionId, goalId, goal, reason?, next?, by: "agent" | "extension", since }
+// { state: "resumed" | "ended" | "cleared", sessionId, goalId }
+```
+
+`waiting` is sent once the agent's run has settled, and again on session start or reload. A pause the user made with `/goal off` isn't announced.
+
 ## Install
 
 Add the package path to `packages` in `~/.pi/agent/settings.json`. Don't run it alongside `pi-goal-x`.

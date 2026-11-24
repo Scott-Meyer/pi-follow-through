@@ -19,8 +19,9 @@ const WAKE_MESSAGE = "goal-wake";
 const NOTE_MESSAGE = "goal-note";
 const STATUS_KEY = "goal";
 /**
- * Shared-bus signal for hosts such as FlightDeck: the goal is waiting for
- * someone (state "waiting"), or no longer is ("resumed", "ended", "cleared").
+ * Shared-bus signal for any app or extension that wants it (a terminal host,
+ * a notifier): the goal is waiting for someone (state "waiting"), or no
+ * longer is ("resumed", "ended", "cleared"). Nobody listening costs nothing.
  */
 const SIGNAL_EVENT = "pi-follow-through:goal:v1";
 
@@ -360,7 +361,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
 			wake_in: Type.Optional(Type.String({ description: "Don't wake me before this: a duration like 10m, 90s or 2h30m, or an ISO time. Until then finishing a turn won't wake you (the user still gets answers), and afterwards waking carries on as usual. Good for waiting on CI, a deploy, or someone else's work. It turns waking on if it was off, unless the user turned it off. Empty string cancels." })),
-			wake: Type.Optional(StringEnum(["on", "after_reply"] as const, { description: "on (the default): be woken each time you finish. after_reply: pause until a message arrives, from the user or another session, then wake again; for when there's truly nothing useful to do until someone answers. Say what you're waiting for in `change`: hosts like FlightDeck can show it to the user. Needing one thing rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. To stop for good, end_goal." })),
+			wake: Type.Optional(StringEnum(["on", "after_reply"] as const, { description: "on (the default): be woken each time you finish. after_reply: pause until a message arrives, from the user or another session, then wake again; for when there's truly nothing useful to do until someone answers. Say what you're waiting for in `change`; whatever app is hosting you can show it to the user. Needing one thing rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. To stop for good, end_goal." })),
 			change: Type.Optional(Type.String({ description: "Optional: a few words on why you're making this change as a whole. It goes in the history next to it; the per-item why fields cover individual steps and edits." })),
 			history: Type.Optional(Type.Boolean({ description: "true shows every earlier version of what changed, for when the details of the history matter." })),
 		}, { additionalProperties: false }),
