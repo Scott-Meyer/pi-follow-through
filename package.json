@@ -2,11 +2,35 @@
   "name": "pi-follow-through",
   "version": "0.1.0",
   "private": true,
-  "description": "Lets a Pi agent have itself woken after each turn until it decides to stop: goals the agent owns, revises, and ends.",
-  "keywords": ["pi-package", "pi-extension", "goal"],
+  "description": "Goals for Pi that belong to the agent: it can have itself woken each time it finishes until it ends the goal, and keep a notebook that survives compaction.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "goal",
+    "agent",
+    "long-running"
+  ],
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Scott-Meyer/pi-follow-through.git"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
   "pi": {
-    "extensions": ["./extensions/goal.ts"]
+    "extensions": [
+      "./extensions/goal.ts"
+    ]
   }
 }
