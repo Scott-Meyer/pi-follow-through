@@ -15,7 +15,7 @@ type RenderColor = Extract<ThemeColor, "accent" | "warning" | "success" | "error
 
 // ── model ───────────────────────────────────────────────────────────────────
 
-export type DashboardStatusCode = "working" | "on" | "sleeping" | "waiting" | "notebook" | "retrying" | "ended";
+export type DashboardStatusCode = "working" | "on" | "sleeping" | "waiting" | "retrying" | "ended";
 
 export interface StepNode {
 	id: string;
@@ -97,10 +97,9 @@ export function deriveDashboardModel(goal: Goal, live: LiveState): DashboardMode
 
 	let status: DashboardModel["status"];
 	if (goal.ended) status = { code: "ended", label: goal.ended.outcome };
-	else if (live.busy) status = { code: "working", label: goal.wake === "after_reply" ? "working, then waiting for you" : goal.wake === "off" ? "working (waking off)" : "working" };
+	else if (live.busy) status = { code: "working", label: goal.wake === "after_reply" ? "working, then waiting for a reply" : "working" };
 	else if (live.retryInSeconds !== undefined) status = { code: "retrying", label: `error, waking again in ${formatDuration(live.retryInSeconds)}` };
-	else if (goal.wake === "after_reply") status = { code: "waiting", label: "waiting for you" };
-	else if (goal.wake === "off") status = { code: "notebook", label: "notebook (waking off)" };
+	else if (goal.wake === "after_reply") status = { code: "waiting", label: "waiting for a reply" };
 	else if (goal.sleepUntil && Date.parse(goal.sleepUntil) > now) {
 		const at = new Date(goal.sleepUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 		status = { code: "sleeping", label: `sleeping until ${at} (in ${formatDuration((Date.parse(goal.sleepUntil) - now) / 1000)})` };
@@ -231,7 +230,6 @@ const STATUS_COLOR: Record<DashboardStatusCode, RenderColor> = {
 	on: "accent",
 	sleeping: "muted",
 	waiting: "mdHeading",
-	notebook: "muted",
 	retrying: "warning",
 	ended: "success",
 };

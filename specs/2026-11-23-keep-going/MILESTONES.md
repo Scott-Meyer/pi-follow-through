@@ -45,3 +45,9 @@ An independent reviewer (fresh context) read the code against Pi's runtime sourc
 - The full view after compaction had no size cap; context there is now capped at 40k chars, newest first, and goal() still shows everything.
 - Widget: growth no longer cuts off the bottom border; newlines in model text are flattened; Esc in the expanded view also stops a running agent.
 - Descriptions now say that starting a goal turns waking on unless `wake: "off"`, that there's one goal at a time, and how step numbering works within a call.
+
+## 2026-11-24: no more waking off
+
+- Scott: "Ais keep making goals then chat completing, I don't like that they can have a goal with waking off". The flux session (gpt-6.2-sol) showed it: goals started with `wake: "off"` "to record acceptance criteria", flipped back to off "to wait for colleague message", then idle until Scott asked "what am I supposed to do next?".
+- Removed `off`. A goal always wakes until `end_goal`. `after_reply` resumes on any incoming message (user or another session), since the flux agent was waiting on a colleague. The idle and error fuses pause (`after_reply`) instead of turning waking off. `/goal off` is now a user pause that only the user's next message resumes; the agent is told and can end the goal if that's what Scott meant. Older records with `off` load as `after_reply`.
+- Verified in RPC mode with a helper that delivers a custom message the way another session would. (1) An agent waiting with after_reply was resumed by the message, recorded it and ended. (2) `/goal off` was steered into a running count, the agent stopped, the peer message got "pong" but no wake, and the user's next message resumed it.

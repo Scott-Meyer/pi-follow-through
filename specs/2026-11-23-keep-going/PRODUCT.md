@@ -8,7 +8,7 @@ This extension gives the agent the abilities directly:
 - **Wake me each time I finish, until I stop it.** The agent sets this up itself, so it knows why it's being woken. It can turn it off when it stops being the right thing.
 - **A notebook that survives compaction.** It holds what the agent is after and why, optional steps, notes, and the record of how things came about.
 
-It's one goal with both uses, and every part is optional. A quick self-wake is a goal with only a sentence in it. A long project is a goal with steps, notes and verbatim conversation. When Scott asks for a goal, the agent makes one and gets the same effect a goal plugin gives, except the agent was part of setting it up. If Scott wants it to work differently, he tells the agent, not the software.
+It's one goal with both uses, and every part is optional. A quick self-wake is a goal with only a sentence in it. A long project is a goal with steps, notes and verbatim conversation. Either way, a goal keeps the agent going until it ends it. When Scott asks for a goal, the agent makes one and gets the same effect a goal plugin gives, except the agent was part of setting it up. If Scott wants it to work differently, he tells the agent, not the software.
 
 ## Principles
 
@@ -21,7 +21,7 @@ It's one goal with both uses, and every part is optional. A quick self-wake is a
 ## Who uses it
 
 - **The agent** is the main user. It sees two tools, `goal` and `end_goal`, with descriptions that explain the ideas above.
-- **Scott** sees a dashboard above the editor while a goal is active, can read the whole goal and its history with `/goal`, can stop waking with `/goal off`, or can just talk to the agent.
+- **Scott** sees a dashboard above the editor while a goal is active, can read the whole goal and its history with `/goal`, can pause waking with `/goal off` (until he next messages the agent), or can just talk to the agent.
 
 ## What it does
 
@@ -33,7 +33,7 @@ Every part except the goal sentence is optional, and all of it can change at any
 - **notes:** the notebook of what truly matters (decisions, constraints, Scott's preferences, gotchas). It's edited like a file: replace the whole thing, append to the end, or make targeted edits that replace one exact passage and leave the rest alone. Old versions stay in history.
 - **context:** records that accumulate and are never overwritten: conversation excerpts (verbatim is often best), how a requirement came about, what was tried.
 - **next:** a note to the agent's next turn.
-- **wake:** `on` (woken each time it finishes; the default), `after_reply` (held until Scott replies, then on again), or `off` (a notebook only). Needing one thing from Scott rarely blocks everything, so the guidance is to ask and keep working on the rest; `after_reply` is for when nothing else can move.
+- **wake:** `on` (woken each time it finishes; the default) or `after_reply` (paused until a message arrives, from Scott or another session, then on again). There's no `off`: a goal always means waking, and the way to stop for good is `end_goal`. Scott: "Ais keep making goals then chat completing, I don't like that they can have a goal with waking off". Needing one thing from Scott rarely blocks everything, so the guidance is to ask and keep working on the rest; `after_reply` is for when nothing else can move.
 - **wake_in:** "don't wake me before then", as a duration (`10m`, `2h30m`) or a time. It's for waiting on CI, a deploy, or someone else's work. Scott: "probably leave in the timer so ais can be like I want to wake in 20 to check on something, its weird but I see it with like ci/cd and stuff." Until then finishing a turn doesn't wake the agent, though Scott still gets answers; afterwards waking carries on. It survives restarts, and if Pi was closed when the time passed, the wake comes when Pi is back.
 
 There's one goal per session at a time. Ending it and starting another is fine.
@@ -57,8 +57,8 @@ Every change is recorded with what changed, who changed it (the agent, Scott, or
 `end_goal` with `done` or `dropped` and a reason Scott will see. The goal stays readable afterward.
 
 ### When things go wrong
-- **Provider errors:** Pi's own retries come first. If a run still ends in an error, the agent is woken again after a growing pause (30s, 1m, 2m, then every 5m), and the wake says what happened. Anything Scott types cancels the pending retry. After 8 failed wakes in a row, waking turns itself off with a note.
-- **No progress:** if three wakes in a row use no tools (updating the goal itself doesn't count), waking turns itself off and leaves a visible note. The goal stays, and the agent can turn waking back on.
+- **Provider errors:** Pi's own retries come first. If a run still ends in an error, the agent is woken again after a growing pause (30s, 1m, 2m, then every 5m), and the wake says what happened. Anything Scott types cancels the pending retry. After 8 failed wakes in a row, waking pauses with a note.
+- **No progress:** if three wakes in a row use no tools (updating the goal itself doesn't count), waking pauses until a message arrives and leaves a visible note. The goal stays, and the agent can turn waking back on.
 - **Subagents:** a forked subagent doesn't inherit its parent's goal, but it can set its own.
 
 ## Out of scope

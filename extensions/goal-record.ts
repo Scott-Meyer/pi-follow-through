@@ -5,6 +5,7 @@
  */
 
 export type StepStatus = "todo" | "doing" | "done" | "dropped";
+/** "off" only appears in older records; it now loads as "after_reply". */
 export type Wake = "on" | "after_reply" | "off";
 /** "keep-going" is the extension's name in records written before the rename. */
 export type Actor = "agent" | "user" | "extension" | "keep-going";
@@ -93,7 +94,7 @@ function apply(goal: Goal, set: GoalFields) {
 		goal.next = set.next ?? undefined;
 		goal.nextSetAtWake = goal.wakes;
 	}
-	if (set.wake !== undefined) goal.wake = set.wake;
+	if (set.wake !== undefined) goal.wake = set.wake === "off" ? "after_reply" : set.wake;
 	if (set.sleepUntil !== undefined) goal.sleepUntil = set.sleepUntil ?? undefined;
 }
 
@@ -331,7 +332,7 @@ export function describeChange(
 	}
 	if (set.next !== undefined && (set.next ?? undefined) !== before?.next) out.push("next note updated");
 	if (set.sleepUntil !== undefined && (set.sleepUntil ?? undefined) !== before?.sleepUntil) out.push(set.sleepUntil ? `sleeping until ${clockTime(set.sleepUntil)}` : "sleep cleared");
-	if (set.wake !== undefined && set.wake !== before?.wake) out.push(`waking ${set.wake === "on" ? "on" : set.wake === "off" ? "off" : "held until the user replies"}`);
+	if (set.wake !== undefined && set.wake !== before?.wake) out.push(set.wake === "on" ? "waking on" : "waking paused until a message arrives");
 	if (context) out.push(`context record added (${context.length} chars)`);
 	return out;
 }
@@ -396,7 +397,7 @@ export function stepProgress(steps: Step[]): string | undefined {
 
 function wakeLabel(wake: Wake, sleepUntil?: string): string {
 	if (wake === "on" && sleepUntil) return `sleeping until ${clockTime(sleepUntil)}, then woken each time you finish`;
-	return wake === "on" ? "on (woken each time you finish)" : wake === "after_reply" ? "held until the user replies" : "off (notebook only)";
+	return wake === "on" ? "on (woken each time you finish)" : "paused until a message arrives (from the user or another session)";
 }
 
 /** One history line per event. */

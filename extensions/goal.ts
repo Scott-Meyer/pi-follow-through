@@ -46,7 +46,7 @@ Nobody has to approve it, and nothing grades it. Start one because the user aske
 
 What helps most later is often how you got here, not just where you landed. Deep in the work, when the exact requirement turns out not to be right, knowing the conversation and reasoning behind it is what lets you adapt well instead of guessing. So it's worth putting real excerpts of the discussion in \`context\`, verbatim when the wording matters, rather than only a summary. After a compaction the whole goal, context included, is shown to you again.
 
-Starting a goal turns waking on unless you pass wake: "off". There's one goal at a time: calling goal while one is active revises it, so end_goal first if you're starting something unrelated. Call goal with no arguments to see everything.`;
+A goal means waking: you're woken each time you finish until you end it. When you're waiting on someone, wake: "after_reply" pauses until a message arrives from the user or another session; when you're waiting on something outside, wake_in sleeps until a time. There's one goal at a time: calling goal while one is active revises it, so end_goal first if you're starting something unrelated. Call goal with no arguments to see everything.`;
 
 const END_DESCRIPTION = `End your goal. "done" when you've finished; "dropped" when it's no longer worth doing or turned out to be the wrong goal, which is a perfectly good outcome when it's the right call. Waking stops, and the goal and its history stay readable. The reason is shown to the user, so say what actually happened. If you only need something from the user, goal({wake: "after_reply"}) pauses waking until they answer instead of ending it, though often you can ask and keep working on the rest.`;
 
@@ -232,7 +232,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		if (idleStreak > 0) nudges.push(`Your last ${idleStreak === 1 ? "wake" : `${idleStreak} wakes`} used no tools; after ${IDLE_FUSE} in a row, waking turns itself off.`);
 		if (g.next && g.wakes - g.nextSetAtWake >= STALE_NEXT_WAKES) nudges.push(`Your next note hasn't changed in ${g.wakes - g.nextSetAtWake} wakes; worth refreshing if things have moved on.`);
 		return [
-			`[goal] You asked to be woken each time you finish, until you end the goal or turn waking off. Wake ${g.wakes}, ${since(g.startedAt)} in.`,
+			`[goal] You asked to be woken each time you finish, until you end the goal. Wake ${g.wakes}, ${since(g.startedAt)} in.`,
 			opts.full ? `The conversation was compacted, so here is your whole goal again.\n\n${renderFull(g, Date.now(), { maxContextChars: FULL_VIEW_CONTEXT_CHARS })}` : renderBrief(g),
 			...nudges,
 			`Carry on. If what you've learned changes the goal or the plan, change it with goal and say why. end_goal when it's done or no longer the right thing. If you need something from the user, ask, and keep going on whatever doesn't depend on the answer; goal({wake: "after_reply"}) is for when nothing does. Waiting on something outside (CI, a deploy)? goal({wake_in: "10m"}) sleeps until then instead of waking straight away.`,
@@ -302,7 +302,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
 			wake_in: Type.Optional(Type.String({ description: "Don't wake me before this: a duration like 10m, 90s or 2h30m, or an ISO time. Until then finishing a turn won't wake you (the user still gets answers), and afterwards waking carries on as usual. Good for waiting on CI, a deploy, or someone else's work. It turns waking on if it was off, unless the user turned it off. Empty string cancels." })),
-			wake: Type.Optional(StringEnum(["on", "after_reply", "off"] as const, { description: "on (the default when starting): be woken each time you finish. after_reply: hold off until the user replies, then wake again; for when there's truly nothing useful to do until they answer. Needing one thing from them rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. off: keep the goal as a notebook without waking." })),
+			wake: Type.Optional(StringEnum(["on", "after_reply"] as const, { description: "on (the default): be woken each time you finish. after_reply: pause until a message arrives, from the user or another session, then wake again; for when there's truly nothing useful to do until someone answers. Needing one thing rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. To stop for good, end_goal." })),
 			change: Type.Optional(Type.String({ description: "Optional: a few words on why you're making this change as a whole. It goes in the history next to it; the per-item why fields cover individual steps and edits." })),
 			history: Type.Optional(Type.Boolean({ description: "true shows every earlier version of what changed, for when the details of the history matter." })),
 		}, { additionalProperties: false }),
@@ -324,7 +324,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 					else {
 						set.sleepUntil = parsed.at;
 						const cur = isActive(goal) ? goal : undefined;
-						if (params.wake === undefined && !(cur?.wake === "off" && lastWakeChangeBy(cur) === "user")) set.wake = "on";
+						if (params.wake === undefined && !(cur?.wake === "after_reply" && lastWakeChangeBy(cur) === "user")) set.wake = "on";
 					}
 				}
 			}
@@ -407,8 +407,8 @@ export default function goalExtension(pi: ExtensionAPI) {
 			const g = goal as Goal;
 			const anyWhy = !!params.change?.trim() || stepWhy.size > 0 || (params.notes_edits ?? []).some((e) => e.why?.trim());
 			const lines = [
-				active ? `Updated:\n- ${summary.join("\n- ")}` : `Goal started. ${g.wake === "on" ? "You'll be woken each time you finish until you end it or turn waking off." : g.wake === "after_reply" ? "Waking starts once the user replies." : "Waking is off; it's a notebook for now."}`,
-				set.sleepUntil && g.wake === "off" ? "The user turned waking off, so the sleep time is saved but won't wake you unless waking is turned back on." : undefined,
+				active ? `Updated:\n- ${summary.join("\n- ")}` : `Goal started. ${g.wake === "on" ? "You'll be woken each time you finish until you end it." : "Waking starts once a message arrives."}`,
+				set.sleepUntil && g.wake === "after_reply" && lastWakeChangeBy(g) === "user" ? "The user paused waking, so the sleep time is saved but won't wake you until they message you." : undefined,
 				active && !anyWhy && (set.goal !== undefined || set.why !== undefined || summary.some((s) => s.startsWith("step removed") || s.startsWith("notes cleared") || s.startsWith("notes rewritten"))) ? "Tip: a few words of why (`change`, or `why` on a step or edit) make the history much more useful later." : undefined,
 				"",
 				renderBrief(g),
@@ -438,17 +438,17 @@ export default function goalExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("goal", {
-		description: "Show the agent's goal and history; `/goal off` stops waking (the agent is told)",
+		description: "Show the agent's goal and history; `/goal off` pauses waking until you next message the agent (it's told)",
 		handler: async (args, ctx) => {
 			const arg = args.trim().toLowerCase();
-			if (arg === "off") {
-				if (!isActive(goal) || goal.wake === "off") return ctx.ui.notify("Nothing is waking the agent.", "info");
+			if (arg === "off" || arg === "pause") {
+				if (!isActive(goal) || goal.wake === "after_reply") return ctx.ui.notify("Nothing is waking the agent right now.", "info");
 				clearErrorTimer();
 				const g = goal;
-				record({ kind: "change", goalId: g.id, at: nowIso(), by: "user", set: { wake: "off" }, reason: "turned off with /goal off", summary: ["waking off"] });
+				record({ kind: "change", goalId: g.id, at: nowIso(), by: "user", set: { wake: "after_reply" }, reason: `paused with /goal ${arg}`, summary: ["waking paused by the user"] });
 				updateStatus(ctx);
-				pi.sendMessage({ customType: NOTE_MESSAGE, content: `[goal] The user turned waking off for your goal "${clip(g.goal, 200)}". The goal itself is still there; you won't be woken for it unless waking is turned back on.`, display: true }, ctx.isIdle() ? { deliverAs: "nextTurn" } : { deliverAs: "steer" });
-				return ctx.ui.notify(ctx.isIdle() ? "Waking is off. The agent will be told on its next turn." : "Waking is off. The agent has been told.", "info");
+				pi.sendMessage({ customType: NOTE_MESSAGE, content: `[goal] The user paused waking for your goal "${clip(g.goal, 200)}". It resumes when they next message you, and messages from other sessions won't resume it. If the user wants you to stop altogether, end_goal is yours to call.`, display: true }, ctx.isIdle() ? { deliverAs: "nextTurn" } : { deliverAs: "steer" });
+				return ctx.ui.notify(ctx.isIdle() ? "Waking is paused until you next message the agent; it'll be told then." : "Waking is paused until you next message the agent; it has been told.", "info");
 			}
 			if (arg === "history" && goal) return ctx.ui.notify(`${renderFull(goal)}\n\nFull history:\n${renderFullHistory(goal)}`, "info");
 			ctx.ui.notify(goal ? renderFull(goal) : "The agent hasn't set a goal in this session.", "info");
@@ -477,18 +477,24 @@ export default function goalExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (event.messageType !== "user") return;
-		runIsWake = false;
-		nextRunIsWake = false;
-		clearErrorTimer();
-		errorAttempts = 0;
-		idleStreak = 0;
+		const ownType = event.messageType === "custom" ? (event as { message?: { customType?: string } }).message?.customType : undefined;
+		if (ownType === WAKE_MESSAGE || ownType === NOTE_MESSAGE) return;
+		const fromUser = event.messageType === "user";
+		if (fromUser) {
+			runIsWake = false;
+			nextRunIsWake = false;
+			clearErrorTimer();
+			errorAttempts = 0;
+			idleStreak = 0;
+		}
 		if (!isActive(goal)) return;
 		const notes: string[] = [];
-		if (goal.wake === "after_reply") {
-			record({ kind: "change", goalId: goal.id, at: nowIso(), by: "extension", set: { wake: "on" }, reason: "the user replied", summary: ["waking on"] });
+		// Waiting on someone: any message resumes it. A pause the user asked for waits for the user.
+		if (goal.wake === "after_reply" && (fromUser || lastWakeChangeBy(goal) !== "user")) {
+			const from = fromUser ? "the user replied" : `a message arrived${ownType ? ` (${ownType})` : ""}`;
+			record({ kind: "change", goalId: goal.id, at: nowIso(), by: "extension", set: { wake: "on" }, reason: from, summary: ["waking on"] });
 			updateStatus(ctx);
-			notes.push("[goal] The user replied, so waking is back on for your goal.");
+			notes.push(`[goal] ${fromUser ? "The user replied" : "A message arrived"}, so waking is back on for your goal.`);
 		}
 		const full = showFullNext;
 		if (full) {
@@ -538,7 +544,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		idleStreak = runIsWake && runToolCalls === 0 ? idleStreak + 1 : 0;
 		const at = nowIso();
 		if (idleStreak >= IDLE_FUSE) {
-			const event2: GoalEvent = { kind: "change", goalId: goal.id, at, by: "extension", set: { wake: "off" }, reason: `your last ${IDLE_FUSE} wakes used no tools`, summary: ["waking off"] };
+			const event2: GoalEvent = { kind: "change", goalId: goal.id, at, by: "extension", set: { wake: "after_reply" }, reason: `your last ${IDLE_FUSE} wakes used no tools`, summary: ["waking paused until a message arrives"] };
 			track(event2);
 			idleStreak = 0;
 			updateStatus(ctx);
@@ -546,7 +552,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 				entries: [
 					...event.entries,
 					{ type: "custom", customType: EVENT_ENTRY, data: event2 },
-					{ type: "custom_message", customType: NOTE_MESSAGE, content: `[goal] Waking turned itself off: your last ${IDLE_FUSE} wakes used no tools. Your goal is still there; goal({wake: "on"}) turns waking back on if you still want it.`, display: true },
+					{ type: "custom_message", customType: NOTE_MESSAGE, content: `[goal] Waking paused itself: your last ${IDLE_FUSE} wakes used no tools. It resumes when a message arrives, or now with goal({wake: "on"}). If the goal is done or no longer right, end_goal.`, display: true },
 				],
 			};
 		}
@@ -583,10 +589,10 @@ export default function goalExtension(pi: ExtensionAPI) {
 		if (!lastRunError || !isActive(goal) || goal.wake !== "on" || isSleeping()) return;
 		if (errorAttempts >= ERROR_FUSE) {
 			const g = goal;
-			record({ kind: "change", goalId: g.id, at: nowIso(), by: "extension", set: { wake: "off" }, reason: `${ERROR_FUSE} wakes in a row ended in errors (last: ${clip(lastRunError, 160)})`, summary: ["waking off"] });
+			record({ kind: "change", goalId: g.id, at: nowIso(), by: "extension", set: { wake: "after_reply" }, reason: `${ERROR_FUSE} wakes in a row ended in errors (last: ${clip(lastRunError, 160)})`, summary: ["waking paused until a message arrives"] });
 			errorAttempts = 0;
 			updateStatus(ctx);
-			pi.sendMessage({ customType: NOTE_MESSAGE, content: `[goal] Waking turned itself off after ${ERROR_FUSE} wakes in a row ended in errors (last: ${clip(lastRunError, 300)}). Your goal is still there; goal({wake: "on"}) turns waking back on.`, display: true }, { deliverAs: "nextTurn" });
+			pi.sendMessage({ customType: NOTE_MESSAGE, content: `[goal] Waking paused itself after ${ERROR_FUSE} wakes in a row ended in errors (last: ${clip(lastRunError, 300)}). It resumes when a message arrives, or now with goal({wake: "on"}).`, display: true }, { deliverAs: "nextTurn" });
 			return;
 		}
 		// The run failed after Pi's own retries. Try again later, slowly.
