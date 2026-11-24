@@ -50,6 +50,14 @@ On restore, if the branch has a compaction entry after the last full view of the
 
 A forked subagent child (`PI_SUBAGENT_CHILD=1` or `PI_SUBAGENT_DEPTH > 0`) ignores inherited snapshots whose `sessionId` differs from its own, so it never runs the parent's goal. It can still set its own.
 
+## Telling hosts the agent is waiting
+
+When a run settles with the goal paused for a reply (`wake: "after_reply"`), the extension emits `pi-follow-through:goal:v1` on Pi's shared event bus:
+- `{ state: "waiting", sessionId, goalId, goal, reason?, next?, by: "agent" | "extension", since }`. `reason` is the agent's `change` for the pause, and `by: "extension"` means a safety stop paused it.
+- `{ state: "resumed" | "ended" | "cleared", sessionId, goalId }` when the wait is over: a message resumed it, the goal ended, or the session changed or shut down.
+
+A pause the user made with `/goal off` isn't announced; they already know. The current state is re-sent on session start, reload and tree navigation, and a repeat of the same waiting is a no-op. FlightDeck's bridge (agreed with flightdeck:flightdeck, parley #19/#20) turns `waiting` into the tab's waiting state with request `goal:<sessionId>/<goalId>`, which gives the waiting panel, the chime and the phone marks, the same as a blocking question.
+
 ## Agent-facing text
 
 The tool descriptions, `promptSnippet` and `promptGuidelines` explain what the capability is and why it exists, following the ai-writing skill: context, not rules. They stay stable so the tool schema doesn't churn the prompt cache. Nothing goes in the system prompt dynamically.

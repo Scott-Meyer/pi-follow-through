@@ -18,6 +18,11 @@ const EVENT_ENTRY = "goal-event";
 const WAKE_MESSAGE = "goal-wake";
 const NOTE_MESSAGE = "goal-note";
 const STATUS_KEY = "goal";
+/**
+ * Shared-bus signal for hosts such as FlightDeck: the goal is waiting for
+ * someone (state "waiting"), or no longer is ("resumed", "ended", "cleared").
+ */
+const SIGNAL_EVENT = "pi-follow-through:goal:v1";
 
 /** Consecutive wakes with no tool use before waking turns itself off. */
 const IDLE_FUSE = 3;
@@ -174,8 +179,59 @@ export default function goalExtension(pi: ExtensionAPI) {
 		schedule(Date.parse(until) - Date.now());
 	}
 
+	// What hosts were last told, so each transition is announced once.
+	let signalled: { key: string; goalId?: string } = { key: "" };
+
+	/** The latest pause and who made it, with the agent's reason if it gave one. */
+	function latestPause(g: Goal) {
+		for (let i = g.history.length - 1; i >= 0; i--) {
+			const e = g.history[i];
+			if (e.kind !== "end" && e.set.wake !== undefined) return e.set.wake === "on" ? undefined : e;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Tell hosts when the goal is waiting on someone: only once the run has
+	 * settled (the agent has said what it needs), and not for a pause the user
+	 * made themselves. Re-sent on session start so a restarted host catches up.
+	 */
+	function signal(ctx: ExtensionContext, force = false) {
+		let sessionId = "";
+		try {
+			sessionId = ctx.sessionManager.getSessionId();
+		} catch {
+			return;
+		}
+		const pause = isActive(goal) && goal.wake === "after_reply" ? latestPause(goal) : undefined;
+		const waiting = !!goal && !!pause && pause.by !== "user" && !busy;
+		let payload: Record<string, unknown>;
+		if (waiting && goal && pause) {
+			payload = {
+				state: "waiting", sessionId, goalId: goal.id, goal: goal.goal,
+				...(pause.reason ? { reason: pause.reason } : {}),
+				...(goal.next ? { next: goal.next } : {}),
+				by: pause.by === "agent" ? "agent" : "extension", since: pause.at,
+			};
+		} else if (signalled.goalId && signalled.key.startsWith("waiting")) {
+			const state = !goal || goal.id !== signalled.goalId ? "cleared" : goal.ended ? "ended" : "resumed";
+			payload = { state, sessionId, goalId: signalled.goalId };
+		} else {
+			return;
+		}
+		const key = `${payload.state}|${payload.goalId}|${payload.since ?? ""}`;
+		if (!force && key === signalled.key) return;
+		signalled = { key, goalId: payload.state === "waiting" ? String(payload.goalId) : undefined };
+		try {
+			pi.events.emit(SIGNAL_EVENT, payload);
+		} catch {
+			// a listener's failure isn't ours to surface
+		}
+	}
+
 	function updateStatus(ctx: ExtensionContext) {
 		armSleep(ctx);
+		signal(ctx);
 		if (!ctx.hasUI) return;
 		dashboard.sync(ctx);
 		try {
@@ -222,7 +278,9 @@ export default function goalExtension(pi: ExtensionAPI) {
 				if (entry.type === "message" && entry.message?.role === "assistant" && (entry.message.timestamp ?? 0) >= start) tokens += (entry.message.usage?.input ?? 0) + (entry.message.usage?.output ?? 0);
 			}
 		}
+		signalled = { key: "" };
 		updateStatus(ctx);
+		signal(ctx, true);
 	}
 
 	function wakeContent(g: Goal, opts: { full?: boolean; error?: string; timed?: string } = {}): string {
@@ -302,7 +360,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
 			wake_in: Type.Optional(Type.String({ description: "Don't wake me before this: a duration like 10m, 90s or 2h30m, or an ISO time. Until then finishing a turn won't wake you (the user still gets answers), and afterwards waking carries on as usual. Good for waiting on CI, a deploy, or someone else's work. It turns waking on if it was off, unless the user turned it off. Empty string cancels." })),
-			wake: Type.Optional(StringEnum(["on", "after_reply"] as const, { description: "on (the default): be woken each time you finish. after_reply: pause until a message arrives, from the user or another session, then wake again; for when there's truly nothing useful to do until someone answers. Needing one thing rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. To stop for good, end_goal." })),
+			wake: Type.Optional(StringEnum(["on", "after_reply"] as const, { description: "on (the default): be woken each time you finish. after_reply: pause until a message arrives, from the user or another session, then wake again; for when there's truly nothing useful to do until someone answers. Say what you're waiting for in `change`: hosts like FlightDeck can show it to the user. Needing one thing rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. To stop for good, end_goal." })),
 			change: Type.Optional(Type.String({ description: "Optional: a few words on why you're making this change as a whole. It goes in the history next to it; the per-item why fields cover individual steps and edits." })),
 			history: Type.Optional(Type.Boolean({ description: "true shows every earlier version of what changed, for when the details of the history matter." })),
 		}, { additionalProperties: false }),
@@ -457,7 +515,15 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (event, ctx) => restore(ctx, (event as { reason?: string }).reason ?? "startup"));
 	pi.on("session_tree", async (_event, ctx) => restore(ctx, "tree"));
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (_event, ctx) => {
+		if (signalled.goalId) {
+			try {
+				pi.events.emit(SIGNAL_EVENT, { state: "cleared", sessionId: ctx.sessionManager.getSessionId(), goalId: signalled.goalId });
+			} catch {
+				// shutting down
+			}
+			signalled = { key: "" };
+		}
 		clearErrorTimer();
 		clearSleepTimer();
 		dashboard.dispose();
@@ -574,6 +640,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.on("agent_settled", async (event, ctx) => {
 		busy = false;
+		signal(ctx);
 		if (event.aborted) {
 			nextRunIsWake = false;
 			clearErrorTimer();
