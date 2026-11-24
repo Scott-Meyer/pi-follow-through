@@ -30,7 +30,7 @@ export interface GoalFields {
 
 export type GoalEvent =
 	| { kind: "start"; goalId: string; sessionId: string; at: string; by: Actor; set: GoalFields; context?: string; reason?: string }
-	| { kind: "change"; goalId: string; at: string; by: Actor; set: GoalFields; context?: string; reason?: string; summary: string[] }
+	| { kind: "change"; goalId: string; at: string; by: Actor; set: GoalFields; context?: string; reason?: string; summary: string[]; /** Notes changed by targeted edits; the summary already shows each one. */ notesEdited?: boolean }
 	| { kind: "end"; goalId: string; at: string; by: Actor; outcome: "done" | "dropped"; reason: string };
 
 export interface WakeMark {
@@ -152,10 +152,13 @@ export interface StepUpdate {
 	status?: string;
 	/** New wording for the step. */
 	text?: string;
+	/** Why this step changed; shown next to it in the history. */
+	why?: string;
 }
 
 /** Apply updates by 1-based number or by text; returns problems instead of throwing. */
-export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step[]; problems: string[] } {
+export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step[]; problems: string[]; why: Map<string, string> } {
+	const why = new Map<string, string>();
 	const next = steps.map((s) => ({ ...s }));
 	const problems: string[] = [];
 	for (const u of updates) {
@@ -189,13 +192,57 @@ export function updateSteps(steps: Step[], updates: StepUpdate[]): { steps: Step
 		}
 		if (status) next[index].status = status;
 		if (u.text?.trim()) next[index].text = u.text.trim();
+		if (u.why?.trim()) why.set(next[index].text, u.why.trim());
 	}
-	return { steps: next, problems };
+	return { steps: next, problems, why };
+}
+
+export interface TextEdit {
+	old_text: string;
+	new_text: string;
+	why?: string;
+}
+
+/**
+ * Targeted edits, like a file edit tool: each old_text must appear exactly
+ * once in the text as it stands after the previous edits. To insert, include
+ * a nearby anchor in old_text and repeat it in new_text.
+ */
+export function editText(text: string, edits: TextEdit[], label: string): { text: string; problems: string[]; lines: string[] } {
+	let current = text;
+	const problems: string[] = [];
+	const lines: string[] = [];
+	edits.forEach((e, i) => {
+		const n = `${label} edit ${i + 1}`;
+		if (!e.old_text) {
+			problems.push(`${n}: old_text is empty (use add_notes to append)`);
+			return;
+		}
+		const first = current.indexOf(e.old_text);
+		if (first < 0) {
+			problems.push(`${n}: old_text not found${current.includes(e.old_text.trim()) ? " exactly (check whitespace)" : ""}`);
+			return;
+		}
+		if (current.indexOf(e.old_text, first + 1) >= 0) {
+			problems.push(`${n}: old_text appears more than once; include more surrounding text`);
+			return;
+		}
+		current = current.slice(0, first) + e.new_text + current.slice(first + e.old_text.length);
+		const what = e.new_text === "" ? `removed "${clip(e.old_text, 80)}"` : `"${clip(e.old_text, 60)}" → "${clip(e.new_text, 80)}"`;
+		lines.push(`${label}: ${what}${e.why?.trim() ? ` — ${e.why.trim()}` : ""}`);
+	});
+	return { text: current, problems, lines };
 }
 
 /** Human-readable description of what a change did, so slips are easy to spot. */
-export function describeChange(before: Goal | undefined, set: GoalFields, context?: string): string[] {
+export function describeChange(
+	before: Goal | undefined,
+	set: GoalFields,
+	context?: string,
+	extra: { notesLines?: string[]; stepWhy?: Map<string, string> } = {},
+): string[] {
 	const out: string[] = [];
+	const stepWhy = (text: string) => (extra.stepWhy?.get(text) ? ` — ${extra.stepWhy.get(text)}` : "");
 	if (set.goal !== undefined && set.goal !== before?.goal) out.push(before ? `goal changed (was: "${clip(before.goal, 160)}")` : "goal set");
 	if (set.why !== undefined && (set.why ?? undefined) !== before?.why) out.push(set.why ? (before?.why ? "why changed" : "why set") : "why cleared");
 	if (set.steps !== undefined) {
@@ -208,17 +255,19 @@ export function describeChange(before: Goal | undefined, set: GoalFields, contex
 		if (added.length && added.length === removed.length && set.steps.length === old.length) {
 			// Same shape, different words: report as rewording rather than add + remove.
 			const renamed = set.steps.map((s, i) => [old[i], s] as const).filter(([o, n]) => o.text !== n.text);
-			for (const [o, n] of renamed) out.push(`step ${set.steps.indexOf(n) + 1} reworded (was: "${clip(o.text, 60)}")${o.status !== n.status ? `, ${o.status} → ${n.status}` : ""}`);
-			for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}`);
+			for (const [o, n] of renamed) out.push(`step ${set.steps.indexOf(n) + 1} reworded (was: "${clip(o.text, 60)}")${o.status !== n.status ? `, ${o.status} → ${n.status}` : ""}${stepWhy(n.text)}`);
+			for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}${stepWhy(s.text)}`);
 			added.length = 0;
 			removed.length = 0;
 			moved.length = 0;
 		}
-		if (added.length) out.push(`steps added: ${added.map((s) => `"${clip(s.text, 60)}"`).join(", ")}`);
+		if (added.length) out.push(`steps added: ${added.map((s) => `"${clip(s.text, 60)}"${stepWhy(s.text)}`).join(", ")}`);
 		if (removed.length) out.push(`steps removed: ${removed.map((s) => `"${clip(s.text, 60)}"`).join(", ")}`);
-		for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}`);
+		for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}${stepWhy(s.text)}`);
 	}
-	if (set.notes !== undefined && (set.notes ?? undefined) !== before?.notes) {
+	if (extra.notesLines?.length) {
+		out.push(...extra.notesLines);
+	} else if (set.notes !== undefined && (set.notes ?? undefined) !== before?.notes) {
 		const was = before?.notes?.length ?? 0;
 		const now = set.notes?.length ?? 0;
 		out.push(!set.notes ? `notes cleared (were ${was} chars)` : was ? `notes rewritten (${was} → ${now} chars)` : `notes written (${now} chars)`);
@@ -268,7 +317,9 @@ export function renderHistory(goal: Goal, limit?: number): string {
 		const who = e.by === "agent" ? "you" : e.by;
 		if (e.kind === "start") return `- ${e.at} ${who}: started${e.reason ? ` — ${e.reason}` : ""}`;
 		if (e.kind === "end") return `- ${e.at} ${who}: ended ${e.outcome} — ${e.reason}`;
-		return `- ${e.at} ${who}: ${e.summary.join("; ") || "no change"}${e.reason ? ` — why: ${e.reason}` : ""}`;
+		const head = `- ${e.at} ${who}:${e.reason ? ` ${e.reason}` : ""}`;
+		if (e.summary.length === 1 && !e.reason) return `- ${e.at} ${who}: ${e.summary[0]}`;
+		return [head, ...e.summary.map((line) => `    - ${line}`)].join("\n");
 	});
 	const skipped = limit && goal.history.length > limit ? `(${goal.history.length - limit} earlier changes; goal({history: true}) shows all)\n` : "";
 	return skipped + lines.join("\n");
@@ -289,10 +340,10 @@ export function renderFullHistory(goal: Goal): string {
 		} else if (e.kind === "start") {
 			out.push([`## ${e.at} ${who}: started`, e.reason ? `Why: ${e.reason}` : undefined, `Goal: ${e.set.goal}`, e.context ? `(with a context record of ${e.context.length} chars)` : undefined].filter(Boolean).join("\n"));
 		} else {
-			const parts = [`## ${e.at} ${who}: ${e.summary.join("; ")}`, e.reason ? `Why: ${e.reason}` : undefined];
+			const parts = [`## ${e.at} ${who}${e.reason ? `: ${e.reason}` : ""}`, ...e.summary.map((line) => `- ${line}`)];
 			if (e.set.goal !== undefined && before?.goal !== e.set.goal) parts.push(`Goal was: ${before?.goal}`);
 			if (e.set.why !== undefined && before?.why) parts.push(`Why it matters was: ${before.why}`);
-			if (e.set.notes !== undefined && before?.notes) parts.push(`Notes were:\n${before.notes}`);
+			if (e.set.notes !== undefined && before?.notes && !e.notesEdited) parts.push(`Notes were:\n${before.notes}`);
 			if (e.set.next !== undefined && before?.next) parts.push(`Next was: ${before.next}`);
 			out.push(parts.filter(Boolean).join("\n"));
 		}

@@ -29,8 +29,8 @@ It's one goal with both uses, and every part is optional. A quick self-wake is a
 Every part except the goal sentence is optional, and all of it can change at any time:
 - **goal:** the outcome, the way you'd explain it to a colleague.
 - **why:** why it matters, so a future agent makes better calls.
-- **steps:** a checklist. The agent sends the whole list, or quick status updates by number or text.
-- **notes:** the notebook of what truly matters (decisions, constraints, Scott's preferences, gotchas). Each write replaces it, and old versions stay in history.
+- **steps:** a checklist. The agent can send the whole list, add steps at the end or after a given step, or change one step's status or wording by number or text.
+- **notes:** the notebook of what truly matters (decisions, constraints, Scott's preferences, gotchas). It's edited like a file: replace the whole thing, append to the end, or make targeted edits that replace one exact passage and leave the rest alone. Old versions stay in history.
 - **context:** records that accumulate and are never overwritten: conversation excerpts (verbatim is often best), how a requirement came about, what was tried.
 - **next:** a note to the agent's next turn.
 - **wake:** `on` (woken each time it finishes; the default), `after_reply` (held until Scott replies, then on again), or `off` (a notebook only).
@@ -38,7 +38,7 @@ Every part except the goal sentence is optional, and all of it can change at any
 There's one goal per session at a time. Ending it and starting another is fine.
 
 ### History
-Every change is recorded with what changed, who changed it (the agent, Scott, or the extension itself), and the agent's reason when it gives one. `goal()` with no arguments shows everything, including recent history. `goal({history: true})` shows every earlier version. Nothing is lost.
+Every change is recorded with what changed, who changed it (the agent, Scott, or the extension itself), and why. Reasons are optional extra info at two levels: one `change` for the whole call, and a `why` on any individual step or notes edit. Each `why` appears next to its own line in the history, so a future agent reading it sees not just what moved but the thinking behind it. `goal()` with no arguments shows everything, including recent history. `goal({history: true})` shows every earlier version. Nothing is lost.
 
 ### Being woken
 - When a run ends and nothing else is about to happen, the agent gets another turn with a short wake: the goal, why, step progress, its next note, the wake count, and how long it's been going. It closes with a reminder that it can change the plan, end the goal, or wait for Scott.
@@ -49,7 +49,8 @@ Every change is recorded with what changed, who changed it (the agent, Scott, or
 - The reply to every change spells out what changed ("steps removed: …", "notes rewritten 1200 → 300 chars"), so accidental drops are caught right away.
 - Changing the goal or why, or removing things, without a reason gets a tip that a reason makes the history more useful.
 - The wake mentions when the next note hasn't changed in a while.
-- Tools accept loose input (plain strings, `[x] text`, `in progress`) and explain what they couldn't apply.
+- Tools accept loose input (plain strings, `[x] text`, `in progress`).
+- As with a file edit, a call that can't be fully applied changes nothing and says exactly why: text not found, ambiguous step matches, a step number that doesn't exist. The reply includes the current state so the fix is easy.
 
 ### Ending
 `end_goal` with `done` or `dropped` and a reason Scott will see. The goal stays readable afterward.

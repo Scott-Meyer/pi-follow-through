@@ -10,8 +10,8 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { GoalDashboard } from "./ui/widget.ts";
 import {
-	clip, describeChange, foldGoal, isActive, parseSteps, renderBrief, renderSteps, renderFull, renderFullHistory, since, stepProgress, updateSteps,
-	type Actor, type Goal, type GoalEvent, type GoalFields, type StepInput, type StepUpdate, type Wake, type WakeMark,
+	clip, describeChange, editText, foldGoal, isActive, parseSteps, renderBrief, renderSteps, renderFull, renderFullHistory, since, stepProgress, updateSteps,
+	type Actor, type Goal, type GoalEvent, type GoalFields, type StepInput, type TextEdit, type StepUpdate, type Wake, type WakeMark,
 } from "./goal-record.ts";
 
 const EVENT_ENTRY = "goal-event";
@@ -168,9 +168,23 @@ export default function goalExtension(pi: ExtensionAPI) {
 		return box;
 	});
 
+	const WHY_ITEM = "Optional: why this one changed. Shown next to it in the history, which helps a future you who's wondering how things got this way.";
 	const StepItem = Type.Union([
 		Type.String(),
-		Type.Object({ text: Type.String(), status: Type.Optional(Type.String({ description: "todo, doing, done or dropped" })) }),
+		Type.Object({
+			text: Type.String(),
+			status: Type.Optional(Type.String({ description: "todo, doing, done or dropped" })),
+			why: Type.Optional(Type.String({ description: WHY_ITEM })),
+		}),
+	]);
+	const NewStepItem = Type.Union([
+		Type.String(),
+		Type.Object({
+			text: Type.String(),
+			status: Type.Optional(Type.String({ description: "todo, doing, done or dropped" })),
+			after: Type.Optional(Type.Number({ description: "Insert after this step number (0 for the top). Default: the end." })),
+			why: Type.Optional(Type.String({ description: WHY_ITEM })),
+		}),
 	]);
 
 	pi.registerTool({
@@ -185,18 +199,24 @@ export default function goalExtension(pi: ExtensionAPI) {
 			goal: Type.Optional(Type.String({ description: "The outcome you're after, the way you'd explain it to a colleague. Needed to start; omit to keep the current one. Specifics are your current plan, not a contract." })),
 			why: Type.Optional(Type.String({ description: "Why it matters and to whom. A future you makes better calls knowing this. Empty string clears." })),
 			steps: Type.Optional(Type.Array(StepItem, { description: "Optional checklist, as the whole list should be now (strings, \"[x] text\", or {text, status}). The reply lists anything added or removed, so an accidental drop is easy to catch." })),
-			add_steps: Type.Optional(Type.Array(StepItem, { description: "Steps to append to the end of the list." })),
+			add_steps: Type.Optional(Type.Array(NewStepItem, { description: "New steps, added at the end or after a given step number." })),
 			step_updates: Type.Optional(Type.Array(Type.Object({
 				step: Type.Union([Type.Number(), Type.String()], { description: "1-based number, or (part of) the step's text" }),
 				status: Type.Optional(Type.String({ description: "todo, doing, done or dropped" })),
 				text: Type.Optional(Type.String({ description: "New wording for the step" })),
+				why: Type.Optional(Type.String({ description: WHY_ITEM })),
 			}), { description: "Change single steps (status, wording) without resending the list." })),
-			notes: Type.Optional(Type.String({ description: "Your notebook of what truly matters: decisions, constraints, the user's preferences, gotchas, anything you'd hate to lose to compaction. Replaces the previous notes; earlier versions stay in history. Empty string clears." })),
-			add_notes: Type.Optional(Type.String({ description: "Appended to the end of your notes, for adding something without rewriting the rest." })),
+			notes: Type.Optional(Type.String({ description: "Your notebook of what truly matters: decisions, constraints, the user's preferences, gotchas, anything you'd hate to lose to compaction. Replaces all of the notes; earlier versions stay in history. Empty string clears. For smaller changes, add_notes and notes_edits leave the rest alone." })),
+			add_notes: Type.Optional(Type.String({ description: "Appended to the end of your notes." })),
+			notes_edits: Type.Optional(Type.Array(Type.Object({
+				old_text: Type.String({ description: "Exact text currently in the notes; must appear once." }),
+				new_text: Type.String({ description: "What replaces it. Empty removes it. To insert, include a nearby line in old_text and repeat it here with your addition." }),
+				why: Type.Optional(Type.String({ description: WHY_ITEM })),
+			}), { description: "Targeted edits to the notes, like editing a file: each one replaces one exact passage and leaves everything else as it is." })),
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
 			wake: Type.Optional(StringEnum(["on", "after_reply", "off"] as const, { description: "on (the default when starting): be woken each time you finish. after_reply: hold off until the user replies, then wake again; good when you need something from them. off: keep the goal as a notebook without waking." })),
-			change: Type.Optional(Type.String({ description: "When you change something, a few words on why. It goes in the history next to the change." })),
+			change: Type.Optional(Type.String({ description: "Optional: a few words on why you're making this change as a whole. It goes in the history next to it; the per-item why fields cover individual steps and edits." })),
 			history: Type.Optional(Type.Boolean({ description: "true shows every earlier version of what changed, for when the details of the history matter." })),
 		}, { additionalProperties: false }),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -209,20 +229,50 @@ export default function goalExtension(pi: ExtensionAPI) {
 			if (params.notes !== undefined) set.notes = text(params.notes);
 			if (params.next !== undefined) set.next = text(params.next);
 			if (params.wake !== undefined) set.wake = params.wake as Wake;
-			if (params.steps !== undefined) set.steps = parseSteps(params.steps as StepInput[]);
 			const context = params.context?.trim() || undefined;
 			const active = isActive(goal) ? goal : undefined;
+			const stepWhy = new Map<string, string>();
+			const noteWhy = (items: Array<StepInput>) => {
+				for (const item of items) if (typeof item === "object" && item && "why" in item && typeof item.why === "string" && item.why.trim() && item.text) stepWhy.set(item.text.trim(), item.why.trim());
+			};
 
-			if (params.add_steps?.length) set.steps = [...(set.steps ?? active?.steps ?? []), ...parseSteps(params.add_steps as StepInput[])];
+			if (params.steps !== undefined) {
+				set.steps = parseSteps(params.steps as StepInput[]);
+				noteWhy(params.steps as StepInput[]);
+			}
+			if (params.add_steps?.length) {
+				const list = [...(set.steps ?? active?.steps ?? [])];
+				// Insert in reverse order of position so earlier inserts don't shift later anchors.
+				const adds = (params.add_steps as Array<StepInput & { after?: number }>).map((item, order) => ({ item, order, after: typeof item === "object" && typeof item.after === "number" ? item.after : list.length }));
+				for (const a of adds) if (a.after < 0 || a.after > list.length) problems.push(`add_steps: there is no step ${a.after} to insert after (there are ${list.length})`);
+				adds.sort((x, y) => y.after - x.after || y.order - x.order);
+				for (const a of adds) list.splice(Math.max(0, Math.min(list.length, a.after)), 0, ...parseSteps([a.item]));
+				set.steps = list;
+				noteWhy(params.add_steps as StepInput[]);
+			}
 			if (params.step_updates?.length) {
-				const base = set.steps ?? active?.steps ?? [];
-				const result = updateSteps(base, params.step_updates as StepUpdate[]);
+				const result = updateSteps(set.steps ?? active?.steps ?? [], params.step_updates as StepUpdate[]);
 				set.steps = result.steps;
 				problems.push(...result.problems);
+				for (const [k, v] of result.why) stepWhy.set(k, v);
+			}
+			let notesLines: string[] | undefined;
+			if (params.notes_edits?.length) {
+				const base = set.notes !== undefined ? set.notes ?? "" : active?.notes ?? "";
+				const result = editText(base, params.notes_edits as TextEdit[], "notes");
+				problems.push(...result.problems);
+				set.notes = result.text.trim() ? result.text : null;
+				notesLines = result.lines;
 			}
 			if (params.add_notes?.trim()) {
 				const base = set.notes !== undefined ? set.notes ?? "" : active?.notes ?? "";
-				set.notes = base ? `${base}\n${params.add_notes.trim()}` : params.add_notes.trim();
+				set.notes = base ? `${base.replace(/\s+$/, "")}\n${params.add_notes.trim()}` : params.add_notes.trim();
+				if (notesLines || params.notes === undefined) (notesLines ??= []).push(`notes: added "${clip(params.add_notes.trim(), 80)}"`);
+			}
+
+			// Like a file edit: if any part can't be applied, nothing is changed.
+			if (problems.length) {
+				return { isError: true, content: [{ type: "text", text: `Nothing was changed:\n- ${problems.join("\n- ")}\n\nFix those and send the call again.${active ? `\n\n${renderBrief(active)}${active.steps.length ? `\nSteps:\n${renderSteps(active.steps)}` : ""}${params.notes_edits?.length ? `\nNotes as they are now:\n${active.notes ?? "(empty)"}` : ""}` : ""}` }], details: goal };
 			}
 
 			const hasChange = Object.keys(set).length > 0 || !!context;
@@ -232,32 +282,28 @@ export default function goalExtension(pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: active ? body : `Your last goal has ended; starting a new one replaces it.\n\n${body}` }], details: goal };
 			}
 
+			const summary = active ? describeChange(active, set, context, { notesLines, stepWhy }) : ["started"];
 			if (!active) {
 				if (!set.goal) {
 					return { isError: true, content: [{ type: "text", text: "Nothing to update: no goal is active. Include `goal` (what you're after) to start one; everything else is optional." }], details: goal };
 				}
-				const event: GoalEvent = { kind: "start", goalId: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), at, by: "agent", set: { wake: "on", ...set }, context, reason: params.change?.trim() || undefined };
-				record(event);
+				record({ kind: "start", goalId: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), at, by: "agent", set: { wake: "on", ...set }, context, reason: params.change?.trim() || undefined });
 			} else {
-				const summary = describeChange(active, set, context);
-				if (summary.length === 0 && problems.length === 0) {
+				if (summary.length === 0) {
 					return { content: [{ type: "text", text: `No change; that's what the goal already says.\n\n${renderBrief(active)}` }], details: active };
 				}
-				if (summary.length > 0) {
-					record({ kind: "change", goalId: active.id, at, by: "agent", set, context, reason: params.change?.trim() || undefined, summary });
-				}
+				record({ kind: "change", goalId: active.id, at, by: "agent", set, context, reason: params.change?.trim() || undefined, summary, notesEdited: notesLines !== undefined && params.notes === undefined });
 			}
 			idleStreak = 0;
 			updateStatus(ctx);
 			const g = goal as Goal;
-			const summary = active ? describeChange(active, set, context) : ["started"];
+			const anyWhy = !!params.change?.trim() || stepWhy.size > 0 || (params.notes_edits ?? []).some((e) => e.why?.trim());
 			const lines = [
-				active ? `Updated: ${summary.join("; ") || "nothing"}.` : `Goal started. ${g.wake === "on" ? "You'll be woken each time you finish until you end it or turn waking off." : g.wake === "after_reply" ? "Waking starts once the user replies." : "Waking is off; it's a notebook for now."}`,
-				problems.length ? `Couldn't apply: ${problems.join("; ")}.` : undefined,
-				active && !params.change && (set.goal !== undefined || set.why !== undefined || summary.some((s) => s.startsWith("steps removed") || s.startsWith("notes cleared"))) ? "Tip: a few words in `change` saying why would make the history more useful later." : undefined,
+				active ? `Updated:\n- ${summary.join("\n- ")}` : `Goal started. ${g.wake === "on" ? "You'll be woken each time you finish until you end it or turn waking off." : g.wake === "after_reply" ? "Waking starts once the user replies." : "Waking is off; it's a notebook for now."}`,
+				active && !anyWhy && (set.goal !== undefined || set.why !== undefined || summary.some((s) => s.startsWith("steps removed") || s.startsWith("notes cleared") || s.startsWith("notes rewritten"))) ? "Tip: a few words of why (`change`, or `why` on a step or edit) make the history much more useful later." : undefined,
 				"",
 				renderBrief(g),
-				// The full list only when its shape changed; a status tick is already in the summary line.
+				// The full list only when its shape changed; a status tick is already in the summary.
 				g.steps.length && set.steps && (!active || summary.some((l) => /^steps (added|removed)|reworded/.test(l))) ? `\nSteps:\n${renderSteps(g.steps)}` : undefined,
 			];
 			return { content: [{ type: "text", text: lines.filter((l) => l !== undefined).join("\n") }], details: g };
