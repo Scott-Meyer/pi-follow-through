@@ -75,7 +75,7 @@ export function formatCompactTokens(value: number): string {
 }
 
 function historyText(e: GoalEvent): HistoryItem {
-	const who = e.by === "agent" ? "" : `${e.by}: `;
+	const who = e.by === "agent" ? "" : e.by === "user" ? "user: " : "extension: ";
 	if (e.kind === "start") return { at: e.at, text: `${who}started${e.reason ? ` — ${e.reason}` : ""}`, marker: "current" };
 	if (e.kind === "end") return { at: e.at, text: `${who}ended ${e.outcome} — ${e.reason}`, marker: e.outcome === "done" ? "done" : "skipped" };
 	const text = `${who}${e.summary.join("; ")}${e.reason ? ` — ${e.reason}` : ""}`;

@@ -6,7 +6,8 @@
 
 export type StepStatus = "todo" | "doing" | "done" | "dropped";
 export type Wake = "on" | "after_reply" | "off";
-export type Actor = "agent" | "user" | "keep-going";
+/** "keep-going" is the extension's name in records written before the rename. */
+export type Actor = "agent" | "user" | "extension" | "keep-going";
 
 export interface Step {
 	text: string;
@@ -285,6 +286,10 @@ export function describeChange(
 	return out;
 }
 
+export function actorLabel(by: Actor): string {
+	return by === "agent" ? "you" : by === "user" ? "user" : "extension";
+}
+
 export function clockTime(iso: string): string {
 	const d = new Date(iso);
 	const sameDay = new Date().toDateString() === d.toDateString();
@@ -348,7 +353,7 @@ function wakeLabel(wake: Wake, sleepUntil?: string): string {
 export function renderHistory(goal: Goal, limit?: number): string {
 	const events = limit ? goal.history.slice(-limit) : goal.history;
 	const lines = events.map((e) => {
-		const who = e.by === "agent" ? "you" : e.by;
+		const who = actorLabel(e.by);
 		if (e.kind === "start") return `- ${e.at} ${who}: started${e.reason ? ` — ${e.reason}` : ""}`;
 		if (e.kind === "end") return `- ${e.at} ${who}: ended ${e.outcome} — ${e.reason}`;
 		const head = `- ${e.at} ${who}:${e.reason ? ` ${e.reason}` : ""}`;
@@ -368,7 +373,7 @@ export function renderFullHistory(goal: Goal): string {
 	let before: Goal | undefined;
 	const seen: GoalEvent[] = [];
 	for (const e of goal.history) {
-		const who = e.by === "agent" ? "you" : e.by;
+		const who = actorLabel(e.by);
 		if (e.kind === "end") {
 			out.push(`## ${e.at} ${who}: ended ${e.outcome}\n${e.reason}`);
 		} else if (e.kind === "start") {

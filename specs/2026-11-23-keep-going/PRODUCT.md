@@ -66,5 +66,4 @@ Every change is recorded with what changed, who changed it (the agent, Scott, or
 - Sharing goals across sessions or machines.
 
 ## Open
-- Package name: `pi-keep-going` is a working name.
 - The dashboard "looks fine I guess"; what it's missing is an open question.

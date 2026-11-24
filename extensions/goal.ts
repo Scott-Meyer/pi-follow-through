@@ -431,7 +431,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		if (!isActive(goal)) return;
 		const notes: string[] = [];
 		if (goal.wake === "after_reply") {
-			record({ kind: "change", goalId: goal.id, at: nowIso(), by: "keep-going", set: { wake: "on" }, reason: "the user replied", summary: ["waking on"] });
+			record({ kind: "change", goalId: goal.id, at: nowIso(), by: "extension", set: { wake: "on" }, reason: "the user replied", summary: ["waking on"] });
 			updateStatus(ctx);
 			notes.push("[goal] The user replied, so waking is back on for your goal.");
 		}
@@ -476,7 +476,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		idleStreak = runIsWake && runToolCalls === 0 ? idleStreak + 1 : 0;
 		const at = nowIso();
 		if (idleStreak >= IDLE_FUSE) {
-			const event2: GoalEvent = { kind: "change", goalId: goal.id, at, by: "keep-going", set: { wake: "off" }, reason: `your last ${IDLE_FUSE} wakes used no tools`, summary: ["waking off"] };
+			const event2: GoalEvent = { kind: "change", goalId: goal.id, at, by: "extension", set: { wake: "off" }, reason: `your last ${IDLE_FUSE} wakes used no tools`, summary: ["waking off"] };
 			track(event2);
 			idleStreak = 0;
 			updateStatus(ctx);

@@ -25,7 +25,7 @@ The wake says the last run ended in an error and includes the error message. Quo
 
 ## No-progress fuse
 
-Count tool executions per run. If a wake's run makes no tool calls three times in a row, don't continue. Record `wake: off` (by `keep-going`) with a visible note. The agent can turn it back on. The wake message includes "your last wake used no tools", so the agent can notice before the fuse trips.
+Count tool executions per run. If a wake's run makes no tool calls three times in a row, don't continue. Record `wake: off` (by the extension) with a visible note. The agent can turn it back on. The wake message includes "your last wake used no tools", so the agent can notice before the fuse trips.
 
 ## State
 
@@ -40,7 +40,7 @@ On restore, if the branch has a compaction entry after the last full view of the
 
 ## Waiting for Scott
 
-`goal({ wake: "after_reply" })` holds waking. The next user-started run (`before_agent_start` with `messageType: "user"`) records `wake: on` (by `keep-going`, reason "the user replied") and adds a short note so the agent knows waking is back on.
+`goal({ wake: "after_reply" })` holds waking. The next user-started run (`before_agent_start` with `messageType: "user"`) records `wake: on` (by the extension, reason "the user replied") and adds a short note so the agent knows waking is back on.
 
 ## Scott turning it off
 

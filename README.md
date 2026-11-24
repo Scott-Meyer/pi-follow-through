@@ -1,4 +1,4 @@
-# pi-keep-going
+# pi-follow-through
 
 Goals for Pi that belong to the agent.
 
