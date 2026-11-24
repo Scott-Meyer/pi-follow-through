@@ -300,11 +300,11 @@ export default function goalExtension(pi: ExtensionAPI) {
 			const anyWhy = !!params.change?.trim() || stepWhy.size > 0 || (params.notes_edits ?? []).some((e) => e.why?.trim());
 			const lines = [
 				active ? `Updated:\n- ${summary.join("\n- ")}` : `Goal started. ${g.wake === "on" ? "You'll be woken each time you finish until you end it or turn waking off." : g.wake === "after_reply" ? "Waking starts once the user replies." : "Waking is off; it's a notebook for now."}`,
-				active && !anyWhy && (set.goal !== undefined || set.why !== undefined || summary.some((s) => s.startsWith("steps removed") || s.startsWith("notes cleared") || s.startsWith("notes rewritten"))) ? "Tip: a few words of why (`change`, or `why` on a step or edit) make the history much more useful later." : undefined,
+				active && !anyWhy && (set.goal !== undefined || set.why !== undefined || summary.some((s) => s.startsWith("step removed") || s.startsWith("notes cleared") || s.startsWith("notes rewritten"))) ? "Tip: a few words of why (`change`, or `why` on a step or edit) make the history much more useful later." : undefined,
 				"",
 				renderBrief(g),
 				// The full list only when its shape changed; a status tick is already in the summary.
-				g.steps.length && set.steps && (!active || summary.some((l) => /^steps (added|removed)|reworded/.test(l))) ? `\nSteps:\n${renderSteps(g.steps)}` : undefined,
+				g.steps.length && set.steps && (!active || summary.some((l) => /^step (added|removed)|reworded/.test(l))) ? `\nSteps:\n${renderSteps(g.steps)}` : undefined,
 			];
 			return { content: [{ type: "text", text: lines.filter((l) => l !== undefined).join("\n") }], details: g };
 		},

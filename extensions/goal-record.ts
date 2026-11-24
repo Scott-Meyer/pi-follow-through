@@ -261,8 +261,8 @@ export function describeChange(
 			removed.length = 0;
 			moved.length = 0;
 		}
-		if (added.length) out.push(`steps added: ${added.map((s) => `"${clip(s.text, 60)}"${stepWhy(s.text)}`).join(", ")}`);
-		if (removed.length) out.push(`steps removed: ${removed.map((s) => `"${clip(s.text, 60)}"`).join(", ")}`);
+		for (const s of added) out.push(`step added: "${clip(s.text, 60)}"${stepWhy(s.text)}`);
+		for (const s of removed) out.push(`step removed: "${clip(s.text, 60)}"`);
 		for (const s of moved) out.push(`step "${clip(s.text, 60)}": ${oldTexts.get(s.text)?.status} → ${s.status}${stepWhy(s.text)}`);
 	}
 	if (extra.notesLines?.length) {
