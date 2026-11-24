@@ -1,6 +1,6 @@
 {
   "name": "pi-follow-through",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Goals for Pi that belong to the agent: it can have itself woken each time it finishes until it ends the goal, and keep a notebook that survives compaction.",
   "keywords": [
