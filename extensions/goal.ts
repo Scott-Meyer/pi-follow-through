@@ -433,7 +433,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			clearErrorTimer();
 			record({ kind: "end", goalId: goal.id, at: nowIso(), by: "agent", outcome: params.outcome as "done" | "dropped", reason: params.reason.trim() });
 			updateStatus(ctx);
-			return { content: [{ type: "text", text: `Goal ended (${params.outcome}). You won't be woken for it anymore; goal() still shows it and its history.` }], details: smallDetails(goal) };
+			return { content: [{ type: "text", text: `Goal ended (${params.outcome}). You won't be woken for it anymore; goal() still shows it and its history. If the user would want to know how it went, now's a good moment to tell them.` }], details: smallDetails(goal) };
 		},
 	});
 
