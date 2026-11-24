@@ -301,6 +301,13 @@ export default function goalExtension(pi: ExtensionAPI) {
 				set.steps = parseSteps(params.steps as StepInput[]);
 				noteWhy(params.steps as StepInput[]);
 			}
+			// Updates and insert positions both refer to the steps as they stand now.
+			if (params.step_updates?.length) {
+				const result = updateSteps(set.steps ?? active?.steps ?? [], params.step_updates as StepUpdate[]);
+				set.steps = result.steps;
+				problems.push(...result.problems);
+				for (const [k, v] of result.why) stepWhy.set(k, v);
+			}
 			if (params.add_steps?.length) {
 				const list = [...(set.steps ?? active?.steps ?? [])];
 				// Insert in reverse order of position so earlier inserts don't shift later anchors.
@@ -310,12 +317,6 @@ export default function goalExtension(pi: ExtensionAPI) {
 				for (const a of adds) list.splice(Math.max(0, Math.min(list.length, a.after)), 0, ...parseSteps([a.item]));
 				set.steps = list;
 				noteWhy(params.add_steps as StepInput[]);
-			}
-			if (params.step_updates?.length) {
-				const result = updateSteps(set.steps ?? active?.steps ?? [], params.step_updates as StepUpdate[]);
-				set.steps = result.steps;
-				problems.push(...result.problems);
-				for (const [k, v] of result.why) stepWhy.set(k, v);
 			}
 			let notesLines: string[] | undefined;
 			if (params.notes_edits?.length) {
