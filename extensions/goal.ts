@@ -40,7 +40,7 @@ What helps most later is often how you got here, not just where you landed. Deep
 
 Call goal with no arguments to see everything.`;
 
-const END_DESCRIPTION = `End your goal. "done" when you've finished; "dropped" when it's no longer worth doing or turned out to be the wrong goal, which is a perfectly good outcome when it's the right call. Waking stops, and the goal and its history stay readable. The reason is shown to the user, so say what actually happened. If you only need something from the user, goal({wake: "after_reply"}) pauses waking until they answer instead of ending it.`;
+const END_DESCRIPTION = `End your goal. "done" when you've finished; "dropped" when it's no longer worth doing or turned out to be the wrong goal, which is a perfectly good outcome when it's the right call. Waking stops, and the goal and its history stay readable. The reason is shown to the user, so say what actually happened. If you only need something from the user, goal({wake: "after_reply"}) pauses waking until they answer instead of ending it, though often you can ask and keep working on the rest.`;
 
 export default function goalExtension(pi: ExtensionAPI) {
 	let goal: Goal | undefined;
@@ -149,7 +149,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			`[goal] You asked to be woken each time you finish, until you end the goal or turn waking off. Wake ${g.wakes}, ${since(g.startedAt)} in.`,
 			opts.full ? `The conversation was compacted, so here is your whole goal again.\n\n${renderFull(g)}` : renderBrief(g),
 			...nudges,
-			`Carry on. If what you've learned changes the goal or the plan, change it with goal and say why. end_goal when it's done or no longer the right thing; goal({wake: "after_reply"}) if you need the user.`,
+			`Carry on. If what you've learned changes the goal or the plan, change it with goal and say why. end_goal when it's done or no longer the right thing. If you need something from the user, ask, and keep going on whatever doesn't depend on the answer; goal({wake: "after_reply"}) is for when nothing does.`,
 		].join("\n");
 	}
 
@@ -215,7 +215,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 			}), { description: "Targeted edits to the notes, like editing a file: each one replaces one exact passage and leaves everything else as it is." })),
 			context: Type.Optional(Type.String({ description: "Adds a record to the goal's background: conversation excerpts (verbatim is often best), how a requirement or decision came about, what was tried and why it didn't work. Records accumulate and are never overwritten." })),
 			next: Type.Optional(Type.String({ description: "A note to the next you: where you are and what you'd do next. Empty string clears." })),
-			wake: Type.Optional(StringEnum(["on", "after_reply", "off"] as const, { description: "on (the default when starting): be woken each time you finish. after_reply: hold off until the user replies, then wake again; good when you need something from them. off: keep the goal as a notebook without waking." })),
+			wake: Type.Optional(StringEnum(["on", "after_reply", "off"] as const, { description: "on (the default when starting): be woken each time you finish. after_reply: hold off until the user replies, then wake again; for when there's truly nothing useful to do until they answer. Needing one thing from them rarely blocks everything, so if other work can go on, keep waking on, ask your question, and carry on with the rest. off: keep the goal as a notebook without waking." })),
 			change: Type.Optional(Type.String({ description: "Optional: a few words on why you're making this change as a whole. It goes in the history next to it; the per-item why fields cover individual steps and edits." })),
 			history: Type.Optional(Type.Boolean({ description: "true shows every earlier version of what changed, for when the details of the history matter." })),
 		}, { additionalProperties: false }),
