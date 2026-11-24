@@ -12,7 +12,7 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import type { Goal } from "../goal-record.ts";
 import {
-	anchoredScrollOffset, clampLinesToWidth, clampScrollOffset, compactStepRows, deriveDashboardModel, maxScrollOffset,
+	clampLinesToWidth, clampScrollOffset, compactFocusOffset, compactStepRows, deriveDashboardModel, maxScrollOffset,
 	renderCompact, renderExpandedBody, renderExpandedFrame, scrollIndicator, type DashboardModel, type LiveState,
 } from "./dashboard.ts";
 
@@ -157,9 +157,9 @@ class GoalWidgetComponent implements Component {
 	handleCompactKey(key: NavKey): boolean {
 		const model = this.lastModel ?? this.model();
 		if (!model || this.isExpanded()) return false;
-		const rows = compactStepRows(this.lastWidth);
+		const rows = Math.min(compactStepRows(this.lastWidth), 3);
 		if (model.steps.length <= rows) return false;
-		let offset = this.compactOffset ?? anchoredScrollOffset(model.steps, rows);
+		let offset = this.compactOffset ?? compactFocusOffset(model.steps, rows);
 		offset = this.step(offset, key, model.steps.length, rows);
 		this.compactOffset = offset;
 		this.tui.requestRender();

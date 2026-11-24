@@ -94,10 +94,10 @@ export function deriveDashboardModel(goal: Goal, live: LiveState): DashboardMode
 
 	let status: DashboardModel["status"];
 	if (goal.ended) status = { code: "ended", label: goal.ended.outcome };
+	else if (live.busy) status = { code: "working", label: goal.wake === "after_reply" ? "working, then waiting for you" : goal.wake === "off" ? "working (waking off)" : "working" };
 	else if (live.retryInSeconds !== undefined) status = { code: "retrying", label: `error, waking again in ${formatDuration(live.retryInSeconds)}` };
 	else if (goal.wake === "after_reply") status = { code: "waiting", label: "waiting for you" };
 	else if (goal.wake === "off") status = { code: "notebook", label: "notebook (waking off)" };
-	else if (live.busy) status = { code: "working", label: "working" };
 	else if (goal.sleepUntil && Date.parse(goal.sleepUntil) > now) {
 		const at = new Date(goal.sleepUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 		status = { code: "sleeping", label: `sleeping until ${at} (in ${formatDuration((Date.parse(goal.sleepUntil) - now) / 1000)})` };
@@ -235,7 +235,7 @@ const STATUS_COLOR: Record<DashboardStatusCode, RenderColor> = {
 
 function statusLine(theme: Theme, model: DashboardModel): string {
 	const usage = model.usageBits ? ` [${model.usageBits}]` : "";
-	return `${theme.fg(STATUS_COLOR[model.status.code], `goal: ${model.status.label}`)}${theme.fg("muted", usage)}`;
+	return `${theme.fg(STATUS_COLOR[model.status.code], model.status.label)}${theme.fg("muted", usage)}`;
 }
 
 function progressBar(theme: Theme, pct: number, barWidth: number): string {
@@ -309,6 +309,16 @@ export interface CompactOptions {
 	scrollKeys: string;
 }
 
+/**
+ * Where the compact steps window starts by default: one finished step for
+ * context, then the current step and what follows. All done: the last few.
+ */
+export function compactFocusOffset(nodes: readonly StepNode[], rows: number): number {
+	const current = nodes.findIndex((n) => n.isCurrent);
+	if (current < 0) return maxScrollOffset(nodes.length, rows);
+	return clampScrollOffset(current - 1, nodes.length, rows);
+}
+
 export function renderCompact(model: DashboardModel, theme: Theme, width: number, opts: CompactOptions): string[] {
 	const safeWidth = Math.max(10, width);
 	const mode = layoutMode(safeWidth);
@@ -318,37 +328,41 @@ export function renderCompact(model: DashboardModel, theme: Theme, width: number
 	lines.push(boxHeader(theme, safeWidth, `${theme.fg("accent", BRAND)} ${frame(theme, `─ ${model.title} `)}`));
 	lines.push(boxLine(theme, safeWidth, statusLine(theme, model)));
 
-	const rows = compactStepRows(safeWidth);
+	const rows = Math.min(compactStepRows(safeWidth), 3);
 	const overflows = model.steps.length > rows;
 	if (model.steps.length > 0 && model.progress) {
-		const offset = opts.scrollOffset ?? anchoredScrollOffset(model.steps, rows);
+		const offset = opts.scrollOffset ?? compactFocusOffset(model.steps, rows);
 		const view = viewport(model.steps.length, rows, offset);
-		const label = `Steps · ✓${model.progress.done} done · ${model.progress.total - model.progress.done} open`;
-		lines.push(boxSectionRule(theme, safeWidth, label, progressBar(theme, model.progress.percentage, headerBarWidth(mode))));
-		for (const row of stepRows(theme, model.steps, view, inner)) lines.push(boxLine(theme, safeWidth, row));
-		if (model.current) {
-			const budget = inner - visibleWidth(`Current  ${model.current.id} · `);
-			lines.push(mode === "minimal"
-				? boxLine(theme, safeWidth, `${theme.fg("accent", "▸")} ${theme.fg("accent", fit(model.current.title, inner - 3))}`)
-				: boxLine(theme, safeWidth, `${theme.fg("muted", "Current")}  ${theme.fg("accent", model.current.id)} · ${theme.fg("accent", fit(model.current.title, budget))}`));
-		} else if (model.progress.done === model.progress.total) {
-			lines.push(boxLine(theme, safeWidth, `${theme.fg("muted", "Current")}  ${theme.fg("accent", "All steps done")}`));
+		const open = model.progress.total - model.progress.done;
+		const label = open === 0 ? `Steps · all ${model.progress.total} done` : `Steps · ${model.progress.done}/${model.progress.total} done`;
+		lines.push(boxSectionRule(theme, safeWidth, label));
+		const shown = model.steps.slice(view.offset, view.offset + view.rows);
+		const above = model.steps.slice(0, view.offset);
+		if (above.length) {
+			const allDone = above.every((n) => n.status === "done" || n.status === "dropped");
+			lines.push(boxLine(theme, safeWidth, theme.fg("muted", allDone ? `↑ ${above.length} done` : `↑ ${above.length} more`)));
+		}
+		for (const row of stepRows(theme, shown, viewport(shown.length, shown.length, 0), inner)) lines.push(boxLine(theme, safeWidth, row));
+		const below = model.steps.length - view.offset - shown.length;
+		if (below > 0) lines.push(boxLine(theme, safeWidth, theme.fg("muted", `… +${below} more`)));
+		// Only when the current step is scrolled out of view.
+		if (model.current && !shown.some((n) => n.isCurrent)) {
+			lines.push(boxLine(theme, safeWidth, `${theme.fg("muted", "Current")}  ${theme.fg("accent", model.current.id)} · ${theme.fg("accent", fit(model.current.title, inner - visibleWidth(`Current  ${model.current.id} · `)))}`));
 		}
 	}
 
-	if (model.next && mode !== "minimal") lines.push(boxLine(theme, safeWidth, `${theme.fg("muted", "Next")}     ${fit(model.next.replace(/\s+/g, " "), inner - 10)}`));
-	if (mode !== "minimal" && (model.notes || model.contextCount)) {
-		const bits = [
-			model.notes ? `${model.notes.split("\n").filter((l) => l.trim()).length} lines of notes` : undefined,
-			model.contextCount ? `${model.contextCount} context record${model.contextCount === 1 ? "" : "s"}` : undefined,
-		].filter(Boolean).join(" · ");
-		lines.push(boxLine(theme, safeWidth, theme.fg("dim", `Notebook ${bits}`)));
-	}
+	if (model.next && mode !== "minimal") lines.push(boxLine(theme, safeWidth, `${theme.fg("muted", "Next")}  ${fit(model.next.replace(/\s+/g, " "), inner - 7)}`));
 
+	const notebook = mode === "wide" || mode === "medium"
+		? [
+			model.notes ? `${model.notes.split("\n").filter((l) => l.trim()).length} notes` : undefined,
+			model.contextCount ? `${model.contextCount} context` : undefined,
+		].filter(Boolean).join(" · ")
+		: "";
 	const hint = overflows
 		? mode === "wide" || mode === "medium" ? `${opts.expandKey}: expand · ${opts.scrollKeys}: scroll` : `${opts.scrollKeys}: scroll`
-		: mode === "wide" || mode === "medium" ? `${opts.expandKey}: expand goal` : `${opts.expandKey}: expand`;
-	lines.push(boxFooter(theme, safeWidth, hint));
+		: `${opts.expandKey}: expand`;
+	lines.push(boxFooter(theme, safeWidth, hint, notebook ? frame(theme, notebook) : ""));
 	return lines;
 }
 

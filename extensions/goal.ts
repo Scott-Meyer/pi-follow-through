@@ -137,16 +137,10 @@ export default function goalExtension(pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		dashboard.sync(ctx);
 		try {
-			if (!isActive(goal)) return ctx.ui.setStatus(STATUS_KEY, undefined);
-			const progress = goal.steps.length ? ` · ${stepProgress(goal.steps)?.split(";")[0]}` : "";
-			const label = goal.wake === "on"
-				? `↻ ${clip(goal.goal, 48)}${progress} · ${goal.wakes} wake${goal.wakes === 1 ? "" : "s"}`
-				: goal.wake === "after_reply"
-					? `⏸ goal waiting for you: ${clip(goal.next ?? goal.goal, 48)}`
-					: `◇ ${clip(goal.goal, 48)}${progress}`;
-			ctx.ui.setStatus(STATUS_KEY, label);
+			// The dashboard shows everything; a footer status would only repeat it.
+			ctx.ui.setStatus(STATUS_KEY, undefined);
 		} catch {
-			// stale ctx after reload; the next session_start redraws
+			// stale ctx after reload
 		}
 	}
 
@@ -546,11 +540,6 @@ export default function goalExtension(pi: ExtensionAPI) {
 		retryAt = Date.now() + delay;
 		dashboard.sync(ctx);
 		errorTimer.unref?.();
-		try {
-			if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, `↻ goal: last run errored, waking again in ${Math.round(delay / 1000)}s`);
-		} catch {
-			// stale ctx
-		}
 	});
 }
 
