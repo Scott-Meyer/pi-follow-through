@@ -21,7 +21,7 @@ It's one goal with both uses, and every part is optional. A quick self-wake is a
 ## Who uses it
 
 - **The agent** is the main user. It sees two tools, `goal` and `end_goal`, with descriptions that explain the ideas above.
-- **Scott** sees a status line while a goal is active, can read the whole goal and its history with `/goal`, can stop waking with `/goal off`, or can just talk to the agent.
+- **Scott** sees a dashboard above the editor while a goal is active, can read the whole goal and its history with `/goal`, can stop waking with `/goal off`, or can just talk to the agent.
 
 ## What it does
 
@@ -44,7 +44,7 @@ Every change is recorded with what changed, who changed it (the agent, Scott, or
 ### Being woken
 - When a run ends and nothing else is about to happen, the agent gets another turn with a short wake: the goal, why, step progress, its next note, the wake count, and how long it's been going. It closes with a reminder that it can change the plan, end the goal, or wait for Scott.
 - After a compaction, the next wake (or Scott's next message) shows the whole goal again, context included. This also works when the compaction happened in an earlier Pi process.
-- There's no wake after Esc, and none while Scott's messages are queued; those go first.
+- There's no wake after Esc (a pending timed wake is cleared too), none while Scott's messages are queued (those go first), and none when a tool deliberately ended the run, such as a blocked action or a question to Scott. A timed or retry wake waits while Scott has text in the editor.
 
 ### Gentle help
 - The reply to every change spells out what changed ("steps removed: …", "notes rewritten 1200 → 300 chars"), so accidental drops are caught right away.
@@ -57,8 +57,8 @@ Every change is recorded with what changed, who changed it (the agent, Scott, or
 `end_goal` with `done` or `dropped` and a reason Scott will see. The goal stays readable afterward.
 
 ### When things go wrong
-- **Provider errors:** Pi's own retries come first. If a run still ends in an error, the agent is woken again after a growing pause (30s, 1m, 2m, then every 5m), and the wake says what happened. Anything Scott types cancels the pending retry.
-- **No progress:** if three wakes in a row use no tools, waking turns itself off and leaves a visible note. The goal stays, and the agent can turn waking back on.
+- **Provider errors:** Pi's own retries come first. If a run still ends in an error, the agent is woken again after a growing pause (30s, 1m, 2m, then every 5m), and the wake says what happened. Anything Scott types cancels the pending retry. After 8 failed wakes in a row, waking turns itself off with a note.
+- **No progress:** if three wakes in a row use no tools (updating the goal itself doesn't count), waking turns itself off and leaves a visible note. The goal stays, and the agent can turn waking back on.
 - **Subagents:** a forked subagent doesn't inherit its parent's goal, but it can set its own.
 
 ## Out of scope

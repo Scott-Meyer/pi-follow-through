@@ -34,7 +34,7 @@ The record is event-sourced. Every change is one `goal-event` custom entry (`sta
 - entries stay small and append-only, and verbatim context is stored once rather than copied into every snapshot;
 - fork, tree navigation, resume and restart are branch-correct without files or locks.
 
-Changes made at a boundary (the idle fuse) use `custom` drafts; changes everywhere else use `pi.appendEntry`. Timers and per-run counters live in memory only. After a restart nothing is replayed: if waking is on, the next settle wakes.
+Appends and targeted notes edits are stored as `notesOps` and replayed in the fold, so small edits stay small on disk; only a whole-notes replace stores the full text. Tool results carry only a small summary in `details`, never the goal. Changes made at a boundary (the idle fuse) use `custom` drafts; changes everywhere else use `pi.appendEntry`. Timers and per-run counters live in memory only. After a restart nothing is replayed: if waking is on, the next settle wakes.
 
 On restore, if the branch has a compaction entry after the last full view of the goal, the next wake or user run shows the whole goal again.
 
@@ -62,7 +62,7 @@ The dashboard is adapted from pi-goal-x's unified dashboard (MIT): the same box 
 - In compact mode, Ctrl+Shift+↑/↓/PgUp/PgDn/Home/End scroll the steps, but only when they overflow, so the keys are never swallowed for a short list.
 - Kept from pi-goal-x because they took them real bugs to learn: the stable-height latch and dock-chrome measurement (stop the terminal jumping or wiping scrollback), ignoring keys while a dialog's editor has focus, and consuming kitty repeat/release events for our keys.
 - Not ported: the auditor toggle (Ctrl+Shift+A), the Esc pause chord (Pi's own Esc already stops the run, and nothing wakes until the user speaks), configurable keybindings, and the debug panel.
-- The footer status line (`ctx.ui.setStatus`) stays as a one-line summary. `/goal` prints the whole goal; `/goal history` adds every earlier version; `/goal off` stops waking.
+- No footer status line: the dashboard already shows everything, and a status line only repeated it. `/goal` prints the whole goal; `/goal history` adds every earlier version; `/goal off` stops waking.
 - Message renderers for wakes and notes: compact, one line, expandable.
 
 ## Testing

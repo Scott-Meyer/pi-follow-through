@@ -29,3 +29,19 @@
 
 - Scott on the dashboard, with a screenshot: "I cannot possibly think of anything that would improve it, thats why I said fine because its not great but I cannot think of anything better". The screenshot showed 11 rows: 4 rows of finished steps, a Current row repeating the ▸ step, a progress bar stranded at the far right, a footer status repeating the box, and "waiting for you" while the agent was working. Made the compact view denser: a 3-row window focused on the current step with "↑ N done" above it, counts in the Steps rule, notebook counts in the bottom border, no Current row unless it's scrolled out of view, no footer status, and "working" wins over the wake label.
 - Scott picked pi-follow-through over pi-keep-going ("okay"), pi-heading, pi-own-goal and pi-onward. The repo moved to ~/git/pi-follow-through. The extension's own actor in history is now "extension"; records written as "keep-going" still read correctly.
+
+## 2026-11-24: pre-release review
+
+An independent reviewer (fresh context) read the code against Pi's runtime source before release. These fixes went in:
+- Session files grew quadratically: every tool result carried the whole goal in `details`, and every notes append stored the full notes. Now `details` is a ~100-byte summary and notes edits and appends are stored as ops. A notes edit plus an append was replayed correctly in a new process.
+- `/goal off` could be undone silently: the notice waited for the next turn, and `wake_in` turned waking back on. The notice now steers into a running turn, and `wake_in` doesn't override a user's off; the reply says so. Verified in a real run.
+- A timed wake fired after Esc. Esc now clears the sleep, with a history entry. Verified in RPC mode with `abort`: no wake followed.
+- Waking carried on past a run a tool had ended deliberately (`terminate`); it no longer does.
+- A step reorder, or a change to one of two steps with the same text, was dropped as "no change". Diffs are now positional when the steps line up, and "steps reordered" otherwise.
+- Overdue sleeps woke the agent on /tree or a fork. Catch-up wakes now happen only after startup, resume or reload.
+- Error retries fired during a sleep; sleeps over about 24.8 days misfired (setTimeout's limit); errors retried forever. Fixed: retries respect sleep, long sleeps re-arm in steps, and there's an 8-error fuse.
+- "20 minutes" style units failed (regex alternation order). Fixed.
+- The idle fuse counted goal bookkeeping as progress, and the wake text now points at `wake_in` for outside waits.
+- The full view after compaction had no size cap; context there is now capped at 40k chars, newest first, and goal() still shows everything.
+- Widget: growth no longer cuts off the bottom border; newlines in model text are flattened; Esc in the expanded view also stops a running agent.
+- Descriptions now say that starting a goal turns waking on unless `wake: "off"`, that there's one goal at a time, and how step numbering works within a call.
